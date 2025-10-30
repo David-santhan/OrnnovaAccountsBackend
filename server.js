@@ -229,7 +229,6 @@ db.run(`
   )
 `);
 
-
 db.run(`
   CREATE TABLE IF NOT EXISTS expense_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
