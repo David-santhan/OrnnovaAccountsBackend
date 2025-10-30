@@ -245,9 +245,6 @@ db.run(`
 `);
 
 
-
-
-
 // GET clients
 app.get("/getclients", (req, res) => {
   db.all("SELECT * FROM ClientsTable", [], (err, rows) => {
