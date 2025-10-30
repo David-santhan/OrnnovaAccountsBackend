@@ -212,7 +212,6 @@ CREATE TABLE IF NOT EXISTS monthly_salary_payments (
 );
 `);
 
-
 // Expenses DB
 db.run(`
   CREATE TABLE IF NOT EXISTS expenses (
