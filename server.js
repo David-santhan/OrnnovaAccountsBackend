@@ -86,7 +86,7 @@ db.run(
 );
 `
 )
-// db.run(`DROP TABLE IF EXISTS expense_payments;`);
+// db.run(`DROP TABLE IF EXISTS monthly_salary_payments;`);
 // Create employees table if not exists
 db.run(`
 CREATE TABLE IF NOT EXISTS employees (
@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS monthly_salary_payments (
     lop REAL DEFAULT 0,                -- Loss of Pay
     paid_amount REAL DEFAULT 0,        -- Amount already paid
     actual_to_pay REAL DEFAULT 0,      -- Net salary to pay after deductions
+    paid_date TEXT DEFAULT (date('now')), -- Default today's date (YYYY-MM-DD)
 
     FOREIGN KEY(employee_id) 
         REFERENCES salary_payments(employee_id)
@@ -210,6 +211,7 @@ CREATE TABLE IF NOT EXISTS monthly_salary_payments (
         ON DELETE CASCADE
 );
 `);
+
 
 // Expenses DB
 db.run(`
