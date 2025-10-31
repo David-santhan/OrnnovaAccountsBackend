@@ -1245,6 +1245,7 @@ app.post("/monthlySalary/save", (req, res) => {
   );
 });
 
+
 // Get monthly salary by month
 app.get("/monthlySalary", (req, res) => {
   const query = `
@@ -1520,18 +1521,280 @@ app.put("/updateexpense/:id", (req, res) => {
 });
 
 
+// 1️⃣ Accounts Table
+db.run(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_number TEXT UNIQUE NOT NULL,
+    account_name TEXT NOT NULL,
+    account_type TEXT CHECK(account_type IN ('Capital','Current')) NOT NULL,
+    balance REAL DEFAULT 0,
+    is_hidden INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+// 2️⃣ Transactions Table
+db.run(`
+  CREATE TABLE IF NOT EXISTS transactions (
+    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_number TEXT NOT NULL,
+    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
+    description TEXT,
+    amount REAL NOT NULL,
+    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
+    related_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
+  );
+`);
+
+
+// 🔹 Create Account
+app.post("/accounts", (req, res) => {
+  const { account_number, account_name, account_type, balance } = req.body;
+  db.run(
+    `INSERT INTO accounts (account_number, account_name, account_type, balance)
+     VALUES (?, ?, ?, ?)`,
+    [account_number, account_name, account_type, balance || 0],
+    function (err) {
+      if (err) return res.status(400).json({ error: err.message });
+      res.json({ id: this.lastID, message: "Account created" });
+    }
+  );
+});
+
+// 🔹 Get All Accounts
+app.get("/accounts", (req, res) => {
+  db.all(`SELECT * FROM accounts`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// 🔹 Hide / Unhide Account
+app.patch("/accounts/:id/hide", (req, res) => {
+  const { hide } = req.body;
+  db.run(`UPDATE accounts SET is_hidden = ? WHERE account_id = ?`, [hide, req.params.id], (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    res.json({ message: hide ? "Hidden" : "Visible" });
+  });
+});
+
+// 🔹 Get Account Balance
+app.get("/accounts/:number/balance", (req, res) => {
+  db.get(`SELECT balance FROM accounts WHERE account_number = ?`, [req.params.number], (err, row) => {
+    if (err || !row) return res.status(404).json({ error: "Not found" });
+    res.json({ account_number: req.params.number, balance: row.balance });
+  });
+});
+
+// 🔹 Add Transaction (auto-linked)
+app.post("/transactions", (req, res) => {
+  const { account_number, amount, description, related_module, related_id } = req.body;
+  let type;
+
+  if (related_module === "Invoice") type = "Incoming";
+  else if (related_module === "Salary" || related_module === "Expense") type = "Outgoing";
+  else type = "Transfer";
+
+  const currentAcc = account_number;
+  const capitalAcc = "CAP-001"; // Change to your actual capital account number
+
+  if (type === "Outgoing") {
+    autoTransferIfInsufficient(db, currentAcc, capitalAcc, amount, (err) => {
+      if (err) return res.status(400).json({ error: err.message });
+      handleTransaction();
+    });
+  } else {
+    handleTransaction();
+  }
+
+  function handleTransaction() {
+    db.serialize(() => {
+      if (type === "Incoming")
+        db.run(`UPDATE accounts SET balance = balance + ? WHERE account_number = ?`, [amount, currentAcc]);
+      else if (type === "Outgoing")
+        db.run(`UPDATE accounts SET balance = balance - ? WHERE account_number = ?`, [amount, currentAcc]);
+
+      db.run(
+        `INSERT INTO transactions (account_number, type, description, amount, related_module, related_id)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [currentAcc, type, description, amount, related_module, related_id],
+        function (err) {
+          if (err) return res.status(400).json({ error: err.message });
+
+          // Update related table
+          if (related_module === "Salary") {
+            db.run(`UPDATE monthly_salary_payments SET paid='Yes', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
+          } else if (related_module === "Expense") {
+            db.run(`UPDATE expense_payments SET status='Paid', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
+          } else if (related_module === "Invoice") {
+            db.run(`UPDATE invoices SET received='Yes', received_date=date('now') WHERE id=?`, [related_id]);
+          }
+
+          res.json({ message: "Transaction recorded", transaction_id: this.lastID });
+        }
+      );
+    });
+  }
+});
+
+// 🔹 Get Transaction History (Joined)
+app.get("/transactions", (req, res) => {
+  db.all(
+    `
+    SELECT t.transaction_id, t.account_number, t.type, t.amount, t.description,
+           t.related_module, t.related_id, t.created_at,
+           CASE
+             WHEN t.related_module = 'Salary' THEN s.employee_name
+             WHEN t.related_module = 'Expense' THEN e.type
+             WHEN t.related_module = 'Invoice' THEN i.client_name
+           END AS related_party
+    FROM transactions t
+    LEFT JOIN monthly_salary_payments s ON t.related_id = s.id AND t.related_module = 'Salary'
+    LEFT JOIN expenses e ON t.related_id = e.auto_id AND t.related_module = 'Expense'
+    LEFT JOIN invoices i ON t.related_id = i.id AND t.related_module = 'Invoice'
+    ORDER BY t.created_at DESC
+    `,
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
+});
 
 
 
 
+// ✅ Create Account API
+app.post("/accounts", (req, res) => {
+  const { account_number, account_name, account_type, balance } = req.body;
+
+  // Validate input
+  if (!account_number || !account_name || !account_type) {
+    return res.status(400).json({ error: "All fields are required" });
+  }
+
+  if (!["Capital", "Current"].includes(account_type)) {
+    return res.status(400).json({ error: "Invalid account type" });
+  }
+
+  // Insert into DB
+  const sql = `
+    INSERT INTO accounts (account_number, account_name, account_type, balance)
+    VALUES (?, ?, ?, ?)
+  `;
+
+  db.run(sql, [account_number, account_name, account_type, balance || 0], function (err) {
+    if (err) {
+      if (err.message.includes("UNIQUE constraint")) {
+        return res.status(400).json({ error: "Account number already exists" });
+      }
+      return res.status(500).json({ error: err.message });
+    }
+
+    // Respond success
+    res.status(201).json({
+      message: "✅ Account created successfully",
+      account: {
+        account_id: this.lastID,
+        account_number,
+        account_name,
+        account_type,
+        balance: balance || 0,
+      },
+    });
+  });
+});
 
 
 
+// PATCH: Add balance
+app.patch("/accounts/:number/add-balance", (req, res) => {
+  const { amount } = req.body;
+  const { number } = req.params;
 
+  if (!amount || amount <= 0)
+    return res.status(400).json({ error: "Invalid amount" });
 
+  db.run(
+    `UPDATE accounts SET balance = balance + ? WHERE account_number = ?`,
+    [amount, number],
+    function (err) {
+      if (err) return res.status(500).json({ error: err.message });
+      if (this.changes === 0)
+        return res.status(404).json({ error: "Account not found" });
+      res.json({ message: "Balance updated successfully" });
+    }
+  );
+});
 
+// 🔹 Transfer money between accounts
+app.post("/accounts/transfer", (req, res) => {
+  const { from_account, to_account, amount, description } = req.body;
 
+  if (!from_account || !to_account || !amount || amount <= 0) {
+    return res.status(400).json({ error: "Invalid transfer details" });
+  }
 
+  if (from_account === to_account) {
+    return res.status(400).json({ error: "Cannot transfer to the same account" });
+  }
+
+  db.serialize(() => {
+    // 1️⃣ Check balance of sender
+    db.get(
+      `SELECT balance FROM accounts WHERE account_number = ?`,
+      [from_account],
+      (err, sender) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!sender) return res.status(404).json({ error: "Sender not found" });
+
+        if (sender.balance < amount) {
+          return res.status(400).json({ error: "Insufficient balance" });
+        }
+
+        // 2️⃣ Deduct from sender
+        db.run(
+          `UPDATE accounts SET balance = balance - ? WHERE account_number = ?`,
+          [amount, from_account],
+          function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+
+            // 3️⃣ Add to receiver
+            db.run(
+              `UPDATE accounts SET balance = balance + ? WHERE account_number = ?`,
+              [amount, to_account],
+              function (err) {
+                if (err) return res.status(500).json({ error: err.message });
+
+                // 4️⃣ Record in transactions table for both
+                const desc = description || `Transfer from ${from_account} to ${to_account}`;
+                const now = new Date().toISOString();
+
+                const stmt = db.prepare(`
+                  INSERT INTO transactions (account_number, type, description, amount, related_module, created_at)
+                  VALUES (?, ?, ?, ?, 'Transfer', ?)
+                `);
+
+                stmt.run(from_account, "Outgoing", desc, amount, now);
+                stmt.run(to_account, "Incoming", desc, amount, now);
+                stmt.finalize();
+
+                res.json({
+                  message: "✅ Transfer successful",
+                  details: { from_account, to_account, amount },
+                });
+              }
+            );
+          }
+        );
+      }
+    );
+  });
+});
 
 
 
