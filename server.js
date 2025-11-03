@@ -157,23 +157,23 @@ db.run(
 );
 
 // -- Transactions linked to forecasts
-db.run(
-  `CREATE TABLE IF NOT EXISTS forecast_transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    forecast_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    type TEXT CHECK(type IN ('Income','Expense')) NOT NULL,
+db.run(`
+  CREATE TABLE IF NOT EXISTS transactions (
+    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_number TEXT NOT NULL,
+    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
+    description TEXT,
     amount REAL NOT NULL,
-    start_date TEXT NOT NULL,
-    end_date TEXT,
-    category TEXT,
-    FOREIGN KEY(forecast_id) REFERENCES forecasts(id)
-);`
-)
+    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
+    related_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
+  );
+`);
 
 // Invoices Table
-db.run(
-  `CREATE TABLE IF NOT EXISTS invoices (
+db.run(`
+  CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     invoice_number TEXT NOT NULL UNIQUE,
     invoice_date TEXT NOT NULL,        -- YYYY-MM-DD
@@ -187,29 +187,25 @@ db.run(
     due_date TEXT NOT NULL,
     billable_days INTEGER NOT NULL,
     received TEXT CHECK(received IN ('Yes','No')) DEFAULT 'No',
-    received_date TEXT
-);
-`
-)
+    received_date TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
 
 // Monthly Salary Payments Table
 db.run(`
-CREATE TABLE IF NOT EXISTS monthly_salary_payments (
+  CREATE TABLE IF NOT EXISTS monthly_salary_payments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     employee_id TEXT NOT NULL,
     employee_name TEXT NOT NULL,
     paid TEXT CHECK(paid IN ('Yes','No')) NOT NULL DEFAULT 'No',
-    month TEXT NOT NULL,               -- Format: YYYY-MM
-    lop REAL DEFAULT 0,                -- Loss of Pay
-    paid_amount REAL DEFAULT 0,        -- Amount already paid
-    actual_to_pay REAL DEFAULT 0,      -- Net salary to pay after deductions
-    paid_date TEXT DEFAULT (date('now')), -- Default today's date (YYYY-MM-DD)
-
-    FOREIGN KEY(employee_id) 
-        REFERENCES salary_payments(employee_id)
-        ON UPDATE CASCADE
-        ON DELETE CASCADE
-);
+    month TEXT NOT NULL, -- Format: YYYY-MM
+    lop REAL DEFAULT 0, -- Loss of Pay
+    paid_amount REAL DEFAULT 0,
+    actual_to_pay REAL DEFAULT 0,
+    paid_date TEXT,
+    FOREIGN KEY(employee_id) REFERENCES salary_payments(employee_id) ON UPDATE CASCADE ON DELETE CASCADE
+  );
 `);
 
 // Expenses DB
@@ -219,14 +215,14 @@ db.run(`
     regular TEXT CHECK(regular IN ('Yes','No')),
     type TEXT NOT NULL,
     description TEXT,
-    amount REAL NOT NULL, -- base/expected amount
+    amount REAL NOT NULL, -- Expected expense amount
     currency TEXT DEFAULT 'INR',
     raised_date TEXT NOT NULL,
     due_date TEXT NOT NULL,
     paid_date TEXT,
     paid_amount REAL,
-    status TEXT DEFAULT 'Raised'
-  )
+    status TEXT CHECK(status IN ('Raised','Paid','Cancelled')) DEFAULT 'Raised'
+  );
 `);
 
 db.run(`
@@ -1214,36 +1210,270 @@ app.put("/updateinvoices/:id", (req, res) => {
 });
 
 
-// API to save monthly salary
 app.post("/monthlySalary/save", (req, res) => {
-  const {
-    empId,
-    empName,
-    paid,
-    month,
-    lop,
-    paidAmount,
-    actualToPay,
-  } = req.body;
+  const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
 
-  const query = `
-    INSERT INTO monthly_salary_payments
+  if (!empId || !empName || !month) {
+    return res.status(400).json({ success: false, message: "Missing required fields" });
+  }
+
+  // 1️⃣ Save or update salary record
+  db.run(
+    `
+    INSERT INTO monthly_salary_payments 
     (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `;
-
-  db.run(
-    query,
+    `,
     [empId, empName, paid, month, lop, paidAmount, actualToPay],
     function (err) {
       if (err) {
-        console.error(err);
-        return res.status(500).json({ success: false, message: "DB error" });
+        console.error("Error saving salary:", err);
+        return res.status(500).json({ success: false, message: "Database error" });
       }
-      return res.json({ success: true, message: "Salary saved successfully", id: this.lastID });
+
+      const salaryId = this.lastID;
+
+      // ✅ Only proceed with account update if paid = "Yes"
+      if (paid === "Yes" && paidAmount > 0) {
+        db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
+          if (err || !currentAcc) {
+            console.error("Error finding current account:", err);
+            return res.status(500).json({ success: false, message: "Current account not found" });
+          }
+
+          // If Current Account has enough balance
+          if (currentAcc.balance >= paidAmount) {
+            const newBalance = currentAcc.balance - paidAmount;
+
+            // 💳 Deduct amount from Current Account
+            db.run(
+              `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+              [newBalance, currentAcc.account_id],
+              (err) => {
+                if (err) {
+                  console.error("Error updating current account:", err);
+                  return res.status(500).json({ success: false, message: "Balance update failed" });
+                }
+
+                // 💾 Record transaction
+                db.run(
+                  `
+                  INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
+                  VALUES (?, ?, ?, ?, ?, ?)
+                  `,
+                  [
+                    currentAcc.account_number,
+                    "Debit",
+                    paidAmount,
+                    `Salary payment to ${empName} (${month})`,
+                    "Salary",
+                    salaryId,
+                  ]
+                );
+
+                return res.json({
+                  success: true,
+                  message: "Salary paid successfully and Current Account updated",
+                });
+              }
+            );
+          } else {
+            // ⚠️ Insufficient Current Account balance → transfer from Capital
+            const needed = paidAmount - currentAcc.balance;
+
+            db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
+              if (err || !capitalAcc) {
+                console.error("Capital account missing:", err);
+                return res.status(500).json({ success: false, message: "Capital account not found" });
+              }
+
+              if (capitalAcc.balance < needed) {
+                return res.status(400).json({
+                  success: false,
+                  message: "Insufficient funds in both accounts",
+                });
+              }
+
+              const newCapitalBalance = capitalAcc.balance - needed;
+              const newCurrentBalance = currentAcc.balance + needed - paidAmount;
+
+              // 🔁 Update both accounts
+              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
+              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
+
+              // 💾 Log both transactions
+              db.run(
+                `
+                INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                `,
+                [
+                  capitalAcc.account_number,
+                  "Debit",
+                  needed,
+                  `Transfer ₹${needed} from Capital → Current for salary payment`,
+                  "Salary",
+                  salaryId,
+                ]
+              );
+
+              db.run(
+                `
+                INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
+                VALUES (?, ?, ?, ?, ?, ?)
+                `,
+                [
+                  currentAcc.account_number,
+                  "Debit",
+                  paidAmount,
+                  `Salary payment to ${empName} (${month})`,
+                  "Salary",
+                  salaryId,
+                ]
+              );
+
+              return res.json({
+                success: true,
+                message: `Salary paid. ₹${needed} transferred from Capital → Current.`,
+              });
+            });
+          }
+        });
+      } else {
+        // Not paid, just saved
+        return res.json({ success: true, message: "Salary saved (not paid yet)" });
+      }
     }
   );
 });
+// ✅ Pay Expense and Record Transaction
+// ✅ Pay Expense and Record Transaction (with account deduction)
+app.post("/pay-expense", (req, res) => {
+  const { expense_id, paid_amount, paid_date } = req.body;
+
+  if (!expense_id || !paid_amount || !paid_date) {
+    return res.status(400).json({ success: false, message: "Missing fields" });
+  }
+
+  // 1️⃣ Get Expense details
+  db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
+
+    const amount = parseFloat(paid_amount);
+
+    // 2️⃣ Get Current Account
+    db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
+      if (err || !currentAcc) {
+        return res.status(500).json({ success: false, message: "Current account not found" });
+      }
+
+      // 3️⃣ Case 1: Enough balance in Current
+      if (currentAcc.balance >= amount) {
+        const newBalance = currentAcc.balance - amount;
+
+        db.serialize(() => {
+          // 🧾 Update Expense
+          db.run(
+            `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
+            [paid_date, amount, expense_id]
+          );
+
+          // 💰 Deduct from Current
+          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id]);
+
+          // 📒 Record Transaction
+          db.run(
+            `
+            INSERT INTO transactions 
+              (account_number, type, amount, description, related_module, related_id, created_at)
+            VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
+            `,
+            [
+              currentAcc.account_number,
+              amount,
+              `Expense payment for ${expense.type || expense.description}`,
+              expense.auto_id,
+            ]
+          );
+
+          return res.json({
+            success: true,
+            message: `Expense paid successfully. ₹${amount} debited from Current Account.`,
+          });
+        });
+      } 
+      // 4️⃣ Case 2: Not enough → auto-transfer from Capital
+      else {
+        const needed = amount - currentAcc.balance;
+
+        db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
+          if (err || !capitalAcc) {
+            return res.status(500).json({ success: false, message: "Capital account not found" });
+          }
+
+          if (capitalAcc.balance < needed) {
+            return res.status(400).json({
+              success: false,
+              message: "Insufficient funds in both accounts",
+            });
+          }
+
+          const newCapitalBalance = capitalAcc.balance - needed;
+          const newCurrentBalance = currentAcc.balance + needed - amount;
+
+          db.serialize(() => {
+            // 🏦 Transfer from Capital → Current
+            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
+            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
+
+            // 🧾 Update Expense
+            db.run(
+              `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
+              [paid_date, amount, expense_id]
+            );
+
+            // 📒 Record Transfer Transaction
+            db.run(
+              `
+              INSERT INTO transactions 
+                (account_number, type, amount, description, related_module, related_id, created_at)
+              VALUES (?, 'Transfer', ?, ?, 'Expense', ?, datetime('now'))
+              `,
+              [
+                capitalAcc.account_number,
+                needed,
+                `Transfer ₹${needed} from Capital → Current for expense payment`,
+                expense.auto_id,
+              ]
+            );
+
+            // 📒 Record Actual Payment Transaction
+            db.run(
+              `
+              INSERT INTO transactions 
+                (account_number, type, amount, description, related_module, related_id, created_at)
+              VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
+              `,
+              [
+                currentAcc.account_number,
+                amount,
+                `Expense payment for ${expense.type || expense.description}`,
+                expense.auto_id,
+              ]
+            );
+
+            return res.json({
+              success: true,
+              message: `Expense paid successfully. ₹${needed} transferred from Capital → Current, and ₹${amount} paid.`,
+            });
+          });
+        });
+      }
+    });
+  });
+});
+
 
 
 // Get monthly salary by month
@@ -1429,51 +1659,128 @@ app.put("/markaspaid/:id", (req, res) => {
   );
 });
 
+// ✅ Pay Expense and Record Transaction (with account deduction)
 app.post("/pay-expense", (req, res) => {
   const { expense_id, paid_amount, paid_date } = req.body;
-  console.log(req.body)
 
   if (!expense_id || !paid_amount || !paid_date) {
-    return res.status(400).json({ error: "Missing required fields" });
+    return res.status(400).json({ success: false, message: "Missing fields" });
   }
 
-  const month_year = paid_date.slice(0, 7); // e.g. "2025-10"
+  // 1️⃣ Get expense details
+  db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
 
-  // Step 1: Get the actual amount for this expense from main table
-  const getAmountSQL = `SELECT amount, regular FROM expenses WHERE auto_id = ?`;
+    const amount = parseFloat(paid_amount);
 
-  db.get(getAmountSQL, [expense_id], (err, expense) => {
-    if (err) {
-      console.error("❌ Error fetching expense:", err);
-      return res.status(500).json({ error: "Database error" });
-    }
-
-    if (!expense) {
-      return res.status(404).json({ error: "Expense not found" });
-    }
-
-    const actual_amount = expense.amount;
-
-    // Step 2: Insert or update the expense_payments table
-    const insertSQL = `
-      INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
-      VALUES (?, ?, ?, ?, ?, 'Paid')
-      ON CONFLICT(expense_id, month_year) DO UPDATE SET
-        paid_amount = excluded.paid_amount,
-        paid_date = excluded.paid_date,
-        status = 'Paid';
-    `;
-
-    db.run(insertSQL, [expense_id, month_year, actual_amount, paid_amount, paid_date], function (err2) {
-      if (err2) {
-        console.error("❌ Error inserting into expense_payments:", err2);
-        return res.status(500).json({ error: "Database error" });
+    // 2️⃣ Get Current Account
+    db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
+      if (err || !currentAcc) {
+        return res.status(500).json({ success: false, message: "Current account not found" });
       }
 
-      res.json({ message: "✅ Payment recorded successfully!" });
+      // 3️⃣ If Current Account has enough balance
+      if (currentAcc.balance >= amount) {
+        const newBalance = currentAcc.balance - amount;
+
+        db.serialize(() => {
+          // 🧾 Update expense status
+          db.run(
+            `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
+            [paid_date, amount, expense_id]
+          );
+
+          // 💰 Deduct from Current Account
+          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id]);
+
+          // 📒 Record Transaction
+          db.run(
+            `
+            INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
+            VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
+            `,
+            [
+              currentAcc.account_number,
+              amount,
+              `Expense payment for ${expense.type || expense.category}`,
+              expense.auto_id,
+            ]
+          );
+
+          return res.json({
+            success: true,
+            message: `Expense paid successfully. ₹${amount} debited from Current Account.`,
+          });
+        });
+      } else {
+        // ⚠️ Insufficient Current balance → transfer from Capital
+        const needed = amount - currentAcc.balance;
+
+        db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
+          if (err || !capitalAcc) {
+            return res.status(500).json({ success: false, message: "Capital account not found" });
+          }
+
+          if (capitalAcc.balance < needed) {
+            return res.status(400).json({
+              success: false,
+              message: "Insufficient funds in both accounts",
+            });
+          }
+
+          const newCapitalBalance = capitalAcc.balance - needed;
+          const newCurrentBalance = currentAcc.balance + needed - amount;
+
+          db.serialize(() => {
+            // 🏦 Update account balances
+            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
+            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
+
+            // 🧾 Update expense
+            db.run(
+              `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
+              [paid_date, amount, expense_id]
+            );
+
+            // 📒 Record transactions
+            db.run(
+              `
+              INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
+              VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
+              `,
+              [
+                capitalAcc.account_number,
+                needed,
+                `Transfer ₹${needed} from Capital → Current for expense payment`,
+                expense.auto_id,
+              ]
+            );
+
+            db.run(
+              `
+              INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
+              VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
+              `,
+              [
+                currentAcc.account_number,
+                amount,
+                `Expense payment for ${expense.type || expense.category}`,
+                expense.auto_id,
+              ]
+            );
+
+            return res.json({
+              success: true,
+              message: `Expense paid successfully. ₹${needed} transferred from Capital → Current.`,
+            });
+          });
+        });
+      }
     });
   });
 });
+
 
 app.put("/updateexpense/:id", (req, res) => {
   let { id } = req.params;
@@ -1520,8 +1827,7 @@ app.put("/updateexpense/:id", (req, res) => {
   });
 });
 
-
-// 1️⃣ Accounts Table
+//Account table
 db.run(`
   CREATE TABLE IF NOT EXISTS accounts (
     account_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1533,8 +1839,7 @@ db.run(`
     created_at TEXT DEFAULT (datetime('now'))
   );
 `);
-
-// 2️⃣ Transactions Table
+//transction table
 db.run(`
   CREATE TABLE IF NOT EXISTS transactions (
     transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1548,6 +1853,7 @@ db.run(`
     FOREIGN KEY(account_number) REFERENCES accounts(account_number)
   );
 `);
+
 
 
 // 🔹 Create Account
