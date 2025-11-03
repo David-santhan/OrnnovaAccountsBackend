@@ -2232,7 +2232,7 @@ app.post("/accounts/transfer", (req, res) => {
   if (from_account === to_account) {
     return res.status(400).json({ error: "Cannot transfer to the same account" });
   }});
-  
+
 // PATCH: Add balance
 app.patch("/accounts/:number/add-balance", (req, res) => {
   const { amount } = req.body;
@@ -2265,7 +2265,6 @@ app.post("/accounts/transfer", (req, res) => {
     return res.status(400).json({ error: "Cannot transfer to the same account" });
   }
 
->>>>>>> b2d77aad5564a503e5223adf6a576ec4a0aab639
   db.serialize(() => {
     // 1️⃣ Check balance of sender
     db.get(
