@@ -2220,7 +2220,6 @@ app.patch("/accounts/:number/add-balance", (req, res) => {
     }
   );
 });
-
 // 🔹 Transfer money between accounts
 app.post("/accounts/transfer", (req, res) => {
   const { from_account, to_account, amount, description } = req.body;
