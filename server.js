@@ -86,7 +86,12 @@ db.run(
 );
 `
 )
-// db.run(`DROP TABLE IF EXISTS monthly_salary_payments;`);
+// db.serialize(() => {
+//   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
+//     if (err) console.error("Error dropping table:", err.message);
+//     else console.log("transactions table dropped");
+//   });
+// });
 // Create employees table if not exists
 db.run(`
 CREATE TABLE IF NOT EXISTS employees (
@@ -239,6 +244,42 @@ db.run(`
     UNIQUE(expense_id, month_year)
   );
 `);
+
+// 1️⃣ Accounts Table
+db.run(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    account_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_number TEXT UNIQUE NOT NULL,
+    account_name TEXT NOT NULL,
+    account_type TEXT CHECK(account_type IN ('Capital','Current')) NOT NULL,
+    balance REAL DEFAULT 0,
+    is_hidden INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+// 2️⃣ Transactions Table
+db.run(`
+  CREATE TABLE IF NOT EXISTS transactions (
+  transaction_id TEXT PRIMARY KEY ,
+  account_number TEXT NOT NULL,
+  type TEXT CHECK(type IN ('Credit','Debit','Transfer')) NOT NULL,
+  description TEXT,
+  amount REAL NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  FOREIGN KEY(account_number) REFERENCES accounts(account_number)
+);
+`);
+// setTimeout(() => {
+//   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
+//     if (err) {
+//       console.error("Error dropping table:", err);
+//     } else {
+//       console.log("✅ Transactions table dropped successfully.");
+//     }
+//   });
+// }, 1000);
+
 
 
 // GET clients
@@ -1217,7 +1258,7 @@ app.post("/monthlySalary/save", (req, res) => {
     return res.status(400).json({ success: false, message: "Missing required fields" });
   }
 
-  // 1️⃣ Save or update salary record
+  // 1️⃣ Save salary record
   db.run(
     `
     INSERT INTO monthly_salary_payments 
@@ -1233,7 +1274,7 @@ app.post("/monthlySalary/save", (req, res) => {
 
       const salaryId = this.lastID;
 
-      // ✅ Only proceed with account update if paid = "Yes"
+      // ✅ Proceed only if paid = "Yes"
       if (paid === "Yes" && paidAmount > 0) {
         db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
           if (err || !currentAcc) {
@@ -1245,7 +1286,7 @@ app.post("/monthlySalary/save", (req, res) => {
           if (currentAcc.balance >= paidAmount) {
             const newBalance = currentAcc.balance - paidAmount;
 
-            // 💳 Deduct amount from Current Account
+            // 💳 Deduct from Current Account
             db.run(
               `UPDATE accounts SET balance = ? WHERE account_id = ?`,
               [newBalance, currentAcc.account_id],
@@ -1255,30 +1296,39 @@ app.post("/monthlySalary/save", (req, res) => {
                   return res.status(500).json({ success: false, message: "Balance update failed" });
                 }
 
+                // 💾 Generate transaction details
+                const transactionId = `DEB/SAL/${empId}/${month}`;
+                const description = `Salary for Employee ${empId} for the month of ${month}`;
+
                 // 💾 Record transaction
                 db.run(
                   `
-                  INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
-                  VALUES (?, ?, ?, ?, ?, ?)
+                  INSERT INTO transactions (transaction_id, account_number, type, description, amount)
+                  VALUES (?, ?, ?, ?, ?)
                   `,
                   [
+                    transactionId,
                     currentAcc.account_number,
                     "Debit",
+                    description,
                     paidAmount,
-                    `Salary payment to ${empName} (${month})`,
-                    "Salary",
-                    salaryId,
-                  ]
-                );
+                  ],
+                  (err) => {
+                    if (err) {
+                      console.error("Error inserting transaction:", err);
+                      return res.status(500).json({ success: false, message: "Transaction failed" });
+                    }
 
-                return res.json({
-                  success: true,
-                  message: "Salary paid successfully and Current Account updated",
-                });
+                    return res.json({
+                      success: true,
+                      message: "Salary paid and transaction recorded successfully",
+                    });
+                  }
+                );
               }
             );
           } else {
-            // ⚠️ Insufficient Current Account balance → transfer from Capital
+            // ⚠️ If insufficient, handle transfer from Capital
             const needed = paidAmount - currentAcc.balance;
 
             db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
@@ -1297,44 +1347,35 @@ app.post("/monthlySalary/save", (req, res) => {
               const newCapitalBalance = capitalAcc.balance - needed;
               const newCurrentBalance = currentAcc.balance + needed - paidAmount;
 
-              // 🔁 Update both accounts
+              // 🔁 Update both balances
               db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
               db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
 
               // 💾 Log both transactions
+              const transferId = `TRF/SAL/${empId}/${month}`;
+              const salaryTransactionId = `DEB/SAL/${empId}/${month}`;
+              const salaryDesc = `Salary for Employee ${empId} for the month of ${month}`;
+              const transferDesc = `Transfer ₹${needed} from Capital → Current for salary payment`;
+
               db.run(
                 `
-                INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO transactions (transaction_id, account_number, type, description, amount)
+                VALUES (?, ?, ?, ?, ?)
                 `,
-                [
-                  capitalAcc.account_number,
-                  "Debit",
-                  needed,
-                  `Transfer ₹${needed} from Capital → Current for salary payment`,
-                  "Salary",
-                  salaryId,
-                ]
+                [transferId, capitalAcc.account_number, "Transfer", transferDesc, needed]
               );
 
               db.run(
                 `
-                INSERT INTO transactions (account_number, type, amount, description, related_module, related_id)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO transactions (transaction_id, account_number, type, description, amount)
+                VALUES (?, ?, ?, ?, ?)
                 `,
-                [
-                  currentAcc.account_number,
-                  "Debit",
-                  paidAmount,
-                  `Salary payment to ${empName} (${month})`,
-                  "Salary",
-                  salaryId,
-                ]
+                [salaryTransactionId, currentAcc.account_number, "Debit", salaryDesc, paidAmount]
               );
 
               return res.json({
                 success: true,
-                message: `Salary paid. ₹${needed} transferred from Capital → Current.`,
+                message: `Salary paid successfully after transferring ₹${needed} from Capital to Current.`,
               });
             });
           }
@@ -1346,6 +1387,7 @@ app.post("/monthlySalary/save", (req, res) => {
     }
   );
 });
+
 // ✅ Pay Expense and Record Transaction
 // ✅ Pay Expense and Record Transaction (with account deduction)
 app.post("/pay-expense", (req, res) => {
@@ -1828,34 +1870,6 @@ app.put("/updateexpense/:id", (req, res) => {
   });
 });
 
-//Account table
-db.run(`
-  CREATE TABLE IF NOT EXISTS accounts (
-    account_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT UNIQUE NOT NULL,
-    account_name TEXT NOT NULL,
-    account_type TEXT CHECK(account_type IN ('Capital','Current')) NOT NULL,
-    balance REAL DEFAULT 0,
-    is_hidden INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-`);
-//transction table
-db.run(`
-  CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT NOT NULL,
-    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
-    description TEXT,
-    amount REAL NOT NULL,
-    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
-    related_id INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
-  );
-`);
-
-
 
 // 🔹 Create Account
 app.post("/accounts", (req, res) => {
@@ -1948,57 +1962,38 @@ app.post("/transactions", (req, res) => {
 });
 
 // 🔹 Get Transaction History (Joined)
-app.get("/transactions", (req, res) => {
+app.get("/transactionsOfBankAccounts", (req, res) => {
+  const { account_number } = req.query;
+
+  if (!account_number) {
+    return res.status(400).json({ error: "Account number is required" });
+  }
+
   db.all(
     `
-    SELECT t.transaction_id, t.account_number, t.type, t.amount, t.description,
-           t.related_module, t.related_id, t.created_at,
-           CASE
-             WHEN t.related_module = 'Salary' THEN s.employee_name
-             WHEN t.related_module = 'Expense' THEN e.type
-             WHEN t.related_module = 'Invoice' THEN i.client_name
-           END AS related_party
-    FROM transactions t
-    LEFT JOIN monthly_salary_payments s ON t.related_id = s.id AND t.related_module = 'Salary'
-    LEFT JOIN expenses e ON t.related_id = e.auto_id AND t.related_module = 'Expense'
-    LEFT JOIN invoices i ON t.related_id = i.id AND t.related_module = 'Invoice'
-    ORDER BY t.created_at DESC
+    SELECT 
+      transaction_id,
+      account_number,
+      type,
+      description,
+      amount,
+      created_at
+    FROM transactions
+    WHERE account_number = ?
+    ORDER BY datetime(created_at) DESC
     `,
-    [],
+    [account_number],
     (err, rows) => {
-      if (err) return res.status(500).json({ error: err.message });
+      if (err) {
+        console.error("Error fetching transactions:", err);
+        return res.status(500).json({ error: "Database error" });
+      }
       res.json(rows);
     }
   );
 });
 
-// 1️⃣ Accounts Table
-db.run(`
-  CREATE TABLE IF NOT EXISTS accounts (
-    account_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT UNIQUE NOT NULL,
-    account_name TEXT NOT NULL,
-    account_type TEXT CHECK(account_type IN ('Capital','Current')) NOT NULL,
-    balance REAL DEFAULT 0,
-    is_hidden INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-`);
 
-// 2️⃣ Transactions Table
-db.run(`
-  CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT NOT NULL,
-    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
-    description TEXT,
-    amount REAL NOT NULL,
-    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
-    related_id INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
-  );
-`);
 
 
 // 🔹 Create Account
