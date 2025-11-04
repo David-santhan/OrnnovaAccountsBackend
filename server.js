@@ -161,21 +161,6 @@ db.run(
 );`
 );
 
-// -- Transactions linked to forecasts
-db.run(`
-  CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT NOT NULL,
-    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
-    description TEXT,
-    amount REAL NOT NULL,
-    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
-    related_id INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
-  );
-`);
-
 // Invoices Table
 db.run(`
   CREATE TABLE IF NOT EXISTS invoices (
@@ -261,14 +246,17 @@ db.run(`
 // 2️⃣ Transactions Table
 db.run(`
   CREATE TABLE IF NOT EXISTS transactions (
-  transaction_id TEXT PRIMARY KEY ,
+  transaction_id TEXT PRIMARY KEY,
   account_number TEXT NOT NULL,
   type TEXT CHECK(type IN ('Credit','Debit','Transfer')) NOT NULL,
   description TEXT,
   amount REAL NOT NULL,
+  previous_balance REAL NOT NULL,  -- ✅ balance before transaction
+  updated_balance REAL NOT NULL,   -- ✅ balance after transaction
   created_at TEXT DEFAULT (datetime('now')),
   FOREIGN KEY(account_number) REFERENCES accounts(account_number)
 );
+
 `);
 // setTimeout(() => {
 //   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
@@ -1220,35 +1208,152 @@ app.put("/invoices/:id", (req, res) => {
 app.put("/updateinvoices/:id", (req, res) => {
   const { id } = req.params;
   const { received, received_date } = req.body;
+
+  // Validate input
   if (!["Yes", "No"].includes(received)) {
     return res.status(400).json({ error: "Received must be 'Yes' or 'No'" });
   }
 
-  // If No, remove received_date
+  // If received = No, clear received_date
   const updatedDate = received === "Yes" ? received_date || null : null;
 
-  const query = `
+  const updateInvoiceQuery = `
     UPDATE invoices
     SET received = ?, received_date = ?
     WHERE id = ?
   `;
 
-  db.run(query, [received, updatedDate, id], function (err) {
+  // Step 1️⃣: Update the invoice
+  db.run(updateInvoiceQuery, [received, updatedDate, id], function (err) {
     if (err) {
-      console.error("Error updating invoice:", err);
+      console.error("❌ Error updating invoice:", err);
       return res.status(500).json({ error: "Failed to update invoice" });
     }
 
-    // Return the updated invoice
-    db.get("SELECT * FROM invoices WHERE id = ?", [id], (err, row) => {
+    if (this.changes === 0) {
+      return res.status(404).json({ error: "Invoice not found" });
+    }
+
+    console.log(`✅ Invoice ${id} updated with received=${received}, date=${updatedDate}`);
+
+    // Step 2️⃣: Fetch the updated invoice
+    db.get("SELECT * FROM invoices WHERE id = ?", [id], (err, invoice) => {
       if (err) {
-        console.error(err);
+        console.error("❌ Error fetching updated invoice:", err);
         return res.status(500).json({ error: "Failed to fetch updated invoice" });
       }
-      res.json(row);
+
+      if (!invoice) {
+        return res.status(404).json({ error: "Invoice not found after update" });
+      }
+
+      // Step 3️⃣: Fetch Current Account
+      db.get(
+        "SELECT account_number, balance FROM accounts WHERE account_type = 'Current' LIMIT 1",
+        (err, account) => {
+          if (err) {
+            console.error("❌ Error fetching current account:", err);
+            return res.status(500).json({ error: "Failed to fetch current account" });
+          }
+
+          if (!account) {
+            return res.status(400).json({ error: "No current account found" });
+          }
+
+          // Step 4️⃣: Prepare Transaction Details
+          const invoiceNumber = invoice.invoice_number;
+          const amount = invoice.invoice_value;
+          const accountNumber = account.account_number;
+          const previousBalance = account.balance;
+          let updatedBalance, type, description, transactionId;
+
+          if (received === "Yes") {
+            transactionId = `CRD|${invoiceNumber}`;
+            type = "Credit";
+            description = `Amount received for invoice ${invoiceNumber}`;
+            updatedBalance = previousBalance + amount;
+          } else {
+            transactionId = `DED|${invoiceNumber}`;
+            type = "Debit";
+            description = `Amount reversed for invoice ${invoiceNumber}`;
+            updatedBalance = previousBalance - amount;
+          }
+
+          // Step 5️⃣: Insert Transaction with balance tracking
+          const insertTransactionQuery = `
+            INSERT INTO transactions 
+              (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `;
+
+          db.run(
+            insertTransactionQuery,
+            [
+              transactionId,
+              accountNumber,
+              type,
+              description,
+              amount,
+              previousBalance,
+              updatedBalance,
+            ],
+            function (err) {
+              if (err) {
+                if (err.message.includes("UNIQUE constraint failed")) {
+                  console.warn(`⚠️ Transaction already exists for ${transactionId}`);
+                } else {
+                  console.error("❌ Error inserting transaction:", err);
+                  return res.status(500).json({ error: "Failed to insert transaction" });
+                }
+              } else {
+                console.log(`✅ Transaction inserted: ${transactionId}`);
+              }
+
+              // Step 6️⃣: Update Account Balance
+              db.run(
+                "UPDATE accounts SET balance = ? WHERE account_number = ?",
+                [updatedBalance, accountNumber],
+                (err) => {
+                  if (err) {
+                    console.error("❌ Error updating account balance:", err);
+                    return res.status(500).json({ error: "Failed to update account balance" });
+                  }
+
+                  console.log(
+                    `💰 Account ${accountNumber} balance updated: Old=${previousBalance}, New=${updatedBalance}`
+                  );
+
+                  // Step 7️⃣: Send Response
+                  res.json({
+                    message:
+                      received === "Yes"
+                        ? "Invoice marked as received, transaction recorded, and balance updated"
+                        : "Invoice marked as not received, reversal transaction recorded, and balance updated",
+                    invoice,
+                    transaction: {
+                      transaction_id: transactionId,
+                      type,
+                      amount,
+                      description,
+                      account_number: accountNumber,
+                      previous_balance: previousBalance,
+                      updated_balance: updatedBalance,
+                    },
+                    updated_balance: updatedBalance,
+                  });
+                }
+              );
+            }
+          );
+        }
+      );
     });
   });
 });
+
+
+
+
 
 
 app.post("/monthlySalary/save", (req, res) => {
@@ -1282,9 +1387,11 @@ app.post("/monthlySalary/save", (req, res) => {
             return res.status(500).json({ success: false, message: "Current account not found" });
           }
 
-          // If Current Account has enough balance
-          if (currentAcc.balance >= paidAmount) {
-            const newBalance = currentAcc.balance - paidAmount;
+          const currentBalance = currentAcc.balance;
+
+          // ✅ If Current Account has enough balance
+          if (currentBalance >= paidAmount) {
+            const newBalance = currentBalance - paidAmount;
 
             // 💳 Deduct from Current Account
             db.run(
@@ -1299,12 +1406,15 @@ app.post("/monthlySalary/save", (req, res) => {
                 // 💾 Generate transaction details
                 const transactionId = `DEB/SAL/${empId}/${month}`;
                 const description = `Salary for Employee ${empId} for the month of ${month}`;
+                const previousBalance = currentBalance;
+                const updatedBalance = newBalance;
 
-                // 💾 Record transaction
+                // 💾 Record transaction with balance tracking
                 db.run(
                   `
-                  INSERT INTO transactions (transaction_id, account_number, type, description, amount)
-                  VALUES (?, ?, ?, ?, ?)
+                  INSERT INTO transactions 
+                  (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)
                   `,
                   [
                     transactionId,
@@ -1312,6 +1422,8 @@ app.post("/monthlySalary/save", (req, res) => {
                     "Debit",
                     description,
                     paidAmount,
+                    previousBalance,
+                    updatedBalance,
                   ],
                   (err) => {
                     if (err) {
@@ -1322,14 +1434,23 @@ app.post("/monthlySalary/save", (req, res) => {
                     return res.json({
                       success: true,
                       message: "Salary paid and transaction recorded successfully",
+                      transaction: {
+                        transaction_id: transactionId,
+                        type: "Debit",
+                        amount: paidAmount,
+                        description,
+                        previous_balance: previousBalance,
+                        updated_balance: updatedBalance,
+                        account_number: currentAcc.account_number,
+                      },
                     });
                   }
                 );
               }
             );
           } else {
-            // ⚠️ If insufficient, handle transfer from Capital
-            const needed = paidAmount - currentAcc.balance;
+            // ⚠️ If insufficient, transfer from Capital
+            const needed = paidAmount - currentBalance;
 
             db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
               if (err || !capitalAcc) {
@@ -1344,49 +1465,92 @@ app.post("/monthlySalary/save", (req, res) => {
                 });
               }
 
-              const newCapitalBalance = capitalAcc.balance - needed;
-              const newCurrentBalance = currentAcc.balance + needed - paidAmount;
+              const capitalPrevBalance = capitalAcc.balance;
+              const capitalNewBalance = capitalPrevBalance - needed;
+              const currentPrevBalance = currentAcc.balance;
+              const currentNewBalance = currentPrevBalance + needed - paidAmount;
 
               // 🔁 Update both balances
-              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
-              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
+              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [capitalNewBalance, capitalAcc.account_id]);
+              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [currentNewBalance, currentAcc.account_id]);
 
-              // 💾 Log both transactions
+              // 💾 Log transfer transaction (Capital → Current)
               const transferId = `TRF/SAL/${empId}/${month}`;
-              const salaryTransactionId = `DEB/SAL/${empId}/${month}`;
-              const salaryDesc = `Salary for Employee ${empId} for the month of ${month}`;
               const transferDesc = `Transfer ₹${needed} from Capital → Current for salary payment`;
 
               db.run(
                 `
-                INSERT INTO transactions (transaction_id, account_number, type, description, amount)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO transactions 
+                (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 `,
-                [transferId, capitalAcc.account_number, "Transfer", transferDesc, needed]
+                [
+                  transferId,
+                  capitalAcc.account_number,
+                  "Transfer",
+                  transferDesc,
+                  needed,
+                  capitalPrevBalance,
+                  capitalNewBalance,
+                ]
               );
+
+              // 💾 Log salary debit from Current Account
+              const salaryTransactionId = `DEB/SAL/${empId}/${month}`;
+              const salaryDesc = `Salary for Employee ${empId} for the month of ${month}`;
 
               db.run(
                 `
-                INSERT INTO transactions (transaction_id, account_number, type, description, amount)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO transactions 
+                (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 `,
-                [salaryTransactionId, currentAcc.account_number, "Debit", salaryDesc, paidAmount]
+                [
+                  salaryTransactionId,
+                  currentAcc.account_number,
+                  "Debit",
+                  salaryDesc,
+                  paidAmount,
+                  currentPrevBalance + needed,
+                  currentNewBalance,
+                ]
               );
 
               return res.json({
                 success: true,
                 message: `Salary paid successfully after transferring ₹${needed} from Capital to Current.`,
+                transactions: [
+                  {
+                    transaction_id: transferId,
+                    type: "Transfer",
+                    amount: needed,
+                    description: transferDesc,
+                    previous_balance: capitalPrevBalance,
+                    updated_balance: capitalNewBalance,
+                    account_number: capitalAcc.account_number,
+                  },
+                  {
+                    transaction_id: salaryTransactionId,
+                    type: "Debit",
+                    amount: paidAmount,
+                    description: salaryDesc,
+                    previous_balance: currentPrevBalance + needed,
+                    updated_balance: currentNewBalance,
+                    account_number: currentAcc.account_number,
+                  },
+                ],
               });
             });
           }
         });
       } else {
-        // Not paid, just saved
+        // Not paid yet
         return res.json({ success: true, message: "Salary saved (not paid yet)" });
       }
     }
   );
 });
+
 
 // ✅ Pay Expense and Record Transaction
 // ✅ Pay Expense and Record Transaction (with account deduction)
@@ -2021,6 +2185,8 @@ app.get("/transactionsOfBankAccounts", (req, res) => {
       type,
       description,
       amount,
+      previous_balance,
+      updated_balance,
       created_at
     FROM transactions
     WHERE account_number = ?
