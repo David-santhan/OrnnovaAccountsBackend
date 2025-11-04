@@ -1702,6 +1702,50 @@ app.put("/markaspaid/:id", (req, res) => {
   );
 });
 
+// ✅ Get pending salaries summary
+
+app.get("/api/pending-salaries", (req, res) => {
+
+  const sql =     `SELECT 
+
+      employee_id,
+
+      employee_name,
+
+      COUNT(month) AS pending_months_count,
+
+      GROUP_CONCAT(month, ', ') AS pending_months
+
+    FROM monthly_salary_payments
+
+    WHERE paid = 'No'
+
+    GROUP BY employee_id, employee_name
+
+    ORDER BY employee_name;`
+;
+
+  db.all(sql, [], (err, rows) => {
+
+    if (err) {
+
+      console.error("Error fetching pending salaries:", err);
+
+      res.status(500).json({ success: false, message: "Database error" });
+
+    } else {
+
+      res.json({ success: true, data: rows });
+
+      console.log(rows)
+
+    }
+
+  });
+
+});
+ 
+
 // ✅ Pay Expense and Record Transaction (with account deduction)
 // app.post("/pay-expense", (req, res) => {
 //   const { expense_id, paid_amount, paid_date } = req.body;
