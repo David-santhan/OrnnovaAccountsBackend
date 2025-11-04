@@ -161,21 +161,6 @@ db.run(
 );`
 );
 
-// -- Transactions linked to forecasts
-db.run(`
-  CREATE TABLE IF NOT EXISTS transactions (
-    transaction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_number TEXT NOT NULL,
-    type TEXT CHECK(type IN ('Incoming','Outgoing','Transfer')) NOT NULL,
-    description TEXT,
-    amount REAL NOT NULL,
-    related_module TEXT CHECK(related_module IN ('Salary','Expense','Invoice','Transfer')),
-    related_id INTEGER,
-    created_at TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(account_number) REFERENCES accounts(account_number)
-  );
-`);
-
 // Invoices Table
 db.run(`
   CREATE TABLE IF NOT EXISTS invoices (
