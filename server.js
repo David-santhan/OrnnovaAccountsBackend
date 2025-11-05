@@ -41,6 +41,7 @@ const db = new sqlite3.Database("./Accounting.db", (err) => {
   db.run("PRAGMA journal_mode=WAL;");      // enable WAL
   db.configure("busyTimeout", 5000);       // wait 5 seconds if busy
 });
+app.locals.db = db;
 
 
 db.run(`
@@ -1866,127 +1867,7 @@ app.put("/markaspaid/:id", (req, res) => {
   );
 });
 
-// ✅ Pay Expense and Record Transaction (with account deduction)
-// app.post("/pay-expense", (req, res) => {
-//   const { expense_id, paid_amount, paid_date } = req.body;
 
-//   if (!expense_id || !paid_amount || !paid_date) {
-//     return res.status(400).json({ success: false, message: "Missing fields" });
-//   }
-
-//   // 1️⃣ Get expense details
-//   db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
-//     if (err) return res.status(500).json({ success: false, message: err.message });
-//     if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
-
-//     const amount = parseFloat(paid_amount);
-
-//     // 2️⃣ Get Current Account
-//     db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
-//       if (err || !currentAcc) {
-//         return res.status(500).json({ success: false, message: "Current account not found" });
-//       }
-
-//       // 3️⃣ If Current Account has enough balance
-//       if (currentAcc.balance >= amount) {
-//         const newBalance = currentAcc.balance - amount;
-
-//         db.serialize(() => {
-//           // 🧾 Update expense status
-//           db.run(
-//             `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
-//             [paid_date, amount, expense_id]
-//           );
-
-//           // 💰 Deduct from Current Account
-//           db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id]);
-
-//           // 📒 Record Transaction
-//           db.run(
-//             `
-//             INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
-//             VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
-//             `,
-//             [
-//               currentAcc.account_number,
-//               amount,
-//               `Expense payment for ${expense.type || expense.category}`,
-//               expense.auto_id,
-//             ]
-//           );
-
-//           return res.json({
-//             success: true,
-//             message: `Expense paid successfully. ₹${amount} debited from Current Account.`,
-//           });
-//         });
-//       } else {
-//         // ⚠️ Insufficient Current balance → transfer from Capital
-//         const needed = amount - currentAcc.balance;
-
-//         db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
-//           if (err || !capitalAcc) {
-//             return res.status(500).json({ success: false, message: "Capital account not found" });
-//           }
-
-//           if (capitalAcc.balance < needed) {
-//             return res.status(400).json({
-//               success: false,
-//               message: "Insufficient funds in both accounts",
-//             });
-//           }
-
-//           const newCapitalBalance = capitalAcc.balance - needed;
-//           const newCurrentBalance = currentAcc.balance + needed - amount;
-
-//           db.serialize(() => {
-//             // 🏦 Update account balances
-//             db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
-//             db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
-
-//             // 🧾 Update expense
-//             db.run(
-//               `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
-//               [paid_date, amount, expense_id]
-//             );
-
-//             // 📒 Record transactions
-//             db.run(
-//               `
-//               INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
-//               VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
-//               `,
-//               [
-//                 capitalAcc.account_number,
-//                 needed,
-//                 `Transfer ₹${needed} from Capital → Current for expense payment`,
-//                 expense.auto_id,
-//               ]
-//             );
-
-//             db.run(
-//               `
-//               INSERT INTO transactions (account_number, type, amount, description, related_module, related_id, created_at)
-//               VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
-//               `,
-//               [
-//                 currentAcc.account_number,
-//                 amount,
-//                 `Expense payment for ${expense.type || expense.category}`,
-//                 expense.auto_id,
-//               ]
-//             );
-
-//             return res.json({
-//               success: true,
-//               message: `Expense paid successfully. ₹${needed} transferred from Capital → Current.`,
-//             });
-//           });
-//         });
-//       }
-//     });
-//   });
-// });
 
 
 app.put("/updateexpense/:id", (req, res) => {
@@ -2478,18 +2359,153 @@ app.post("/accounts/transfer", (req, res) => {
   });
 });
 
+// Helper: convert YYYY-MM string to comparable key
+function monthKey(dateStr) {
+  if (!dateStr) return null;
+  return dateStr.slice(0, 7);
+}
 
+// Helper: run SQL wrapped in a Promise
+function runQuery(db, sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
 
+// Simple linear regression for forecasting numeric array
+function linearRegressionForecast(values, predictMonths = 3) {
+  const n = values.length;
+  if (n === 0) return Array(predictMonths).fill(0);
 
+  let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
+  for (let i = 0; i < n; i++) {
+    const x = i;
+    const y = values[i] || 0;
+    sumX += x; sumY += y; sumXX += x*x; sumXY += x*y;
+  }
 
+  const denom = n*sumXX - sumX*sumX;
+  let slope = 0, intercept = sumY/n;
+  if (denom !== 0) slope = (n*sumXY - sumX*sumY)/denom;
 
+  const results = [];
+  for (let k = 0; k < predictMonths; k++) {
+    const x = n + k;
+    let y = intercept + slope * x;
+    if (y < 0) y = 0;
+    results.push(Number(y.toFixed(2)));
+  }
+  return results;
+}
 
+// Endpoint: GET /monthly-summary?months=12&forecast=3
+// Endpoint: GET /monthly-summary?months=12&forecast=3
+app.get("/monthly-summary", async (req, res) => {
+  const db = req.app.locals.db;
+  const months = parseInt(req.query.months || "12", 10);
+  const forecastMonths = parseInt(req.query.forecast || "3", 10); // future months to predict
 
+  try {
+    // 1️⃣ Fetch historical transaction data
+    const transRows = await runQuery(db, `
+      SELECT strftime('%Y-%m', created_at) as month,
+        SUM(CASE WHEN type='Credit' THEN amount ELSE 0 END) as credit_total,
+        SUM(CASE WHEN type='Debit' THEN amount ELSE 0 END) as debit_total
+      FROM transactions
+      GROUP BY month
+      ORDER BY month ASC
+      LIMIT ?
+    `, [months]);
 
+    // Merge into summaryMap
+    const summaryMap = {};
+    transRows.forEach(r => {
+      const m = monthKey(r.month);
+      summaryMap[m] = {
+        month: m,
+        credit_total: Number(r.credit_total || 0),
+        debit_total: Number(r.debit_total || 0),
+      };
+    });
 
+    // Arrays for linear regression
+    const creditArr = Object.values(summaryMap).map(r => r.credit_total);
+    const debitArr = Object.values(summaryMap).map(r => r.debit_total);
 
+    // 2️⃣ Forecast future months using linear regression
+    const futureCredits = linearRegressionForecast(creditArr, forecastMonths);
+    const futureDebits = linearRegressionForecast(debitArr, forecastMonths);
 
+    // Determine labels for future months
+    const lastMonth = Object.keys(summaryMap).sort().slice(-1)[0]; // last historical month
+    const futureMonths = [];
+    if (lastMonth) {
+      let [year, month] = lastMonth.split("-").map(Number);
+      for (let i = 0; i < forecastMonths; i++) {
+        month++;
+        if (month > 12) { month = 1; year++; }
+        futureMonths.push(`${year.toString().padStart(4,'0')}-${month.toString().padStart(2,'0')}`);
+      }
+    }
 
+    // 3️⃣ Fetch active projects
+    const projects = await runQuery(db, `
+      SELECT startDate, endDate, monthlyBilling, employeeID, employeeName
+      FROM Projects
+      WHERE active='Yes'
+    `);
+
+    // Optionally: fetch salaries per employee if you have a Salaries table
+    const salariesMap = {};
+    const salaryRows = await runQuery(db, `
+      SELECT employeeID, month, SUM(paid_amount) as paid
+      FROM monthly_salary_payments
+      GROUP BY employeeID, month
+    `);
+    salaryRows.forEach(s => {
+      if (!salariesMap[s.employeeID]) salariesMap[s.employeeID] = {};
+      salariesMap[s.employeeID][monthKey(s.month)] = Number(s.paid || 0);
+    });
+
+    // 4️⃣ Append future months based on projects
+    futureMonths.forEach((m, i) => {
+      let projectIncome = 0;
+      let projectExpense = 0;
+
+      projects.forEach(p => {
+        const start = monthKey(p.startDate);
+        const end = monthKey(p.endDate);
+        if (start && end && m >= start && m <= end) {
+          projectIncome += Number(p.monthlyBilling || 0);
+
+          // Salary per assigned employee (if salary info available)
+          if (p.employeeID && salariesMap[p.employeeID] && salariesMap[p.employeeID][m]) {
+            projectExpense += salariesMap[p.employeeID][m];
+          } else {
+            // fallback if no salary info, optionally estimate
+            projectExpense += 0;
+          }
+        }
+      });
+
+      // Use project-based values for future month
+      summaryMap[m] = {
+        month: m,
+        credit_total: projectIncome,
+        debit_total: projectExpense, // future debits based on project salaries
+        forecast: true
+      };
+    });
+
+    // 5️⃣ Return sorted summary
+    const summary = Object.values(summaryMap).sort((a,b) => a.month > b.month ? 1 : -1);
+    res.json({ success: true, data: summary });
+
+  } catch (err) {
+    console.error("Error in /monthly-summary:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
 
 
 
