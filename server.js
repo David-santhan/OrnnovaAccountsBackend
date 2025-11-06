@@ -2702,6 +2702,7 @@ app.get("/monthly-summary", async (req, res) => {
         forecast: true
       };
     });
+  
 
     // 5️⃣ Return sorted summary
     const summary = Object.values(summaryMap).sort((a,b) => a.month > b.month ? 1 : -1);
