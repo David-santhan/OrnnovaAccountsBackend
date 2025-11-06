@@ -270,6 +270,19 @@ db.run(`
 // }, 1000);
 
 
+function runQuery(query) {
+  return new Promise((resolve, reject) => {
+    db.all(query, (err, rows) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(rows || []);
+      }
+    });
+  });
+}
+
+
 
 // GET clients
 app.get("/getclients", (req, res) => {
@@ -1357,6 +1370,28 @@ app.put("/updateinvoices/:id", (req, res) => {
 
 
 
+// app.post("/monthlySalary/save", (req, res) => {
+//   const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
+
+//   if (!empId || !empName || !month) {
+//     return res.status(400).json({ success: false, message: "Missing required fields" });
+//   }
+
+//   // 1️⃣ Save salary record
+//   db.run(
+//     `
+//     INSERT INTO monthly_salary_payments 
+//     (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
+//     VALUES (?, ?, ?, ?, ?, ?, ?)
+//     `,
+//     [empId, empName, paid, month, lop, paidAmount, actualToPay],
+//     function (err) {
+//       if (err) {
+//         console.error("Error saving salary:", err);
+//         return res.status(500).json({ success: false, message: "Database error" });
+//       }
+
+//       const salaryId = this.lastID;
 app.post("/monthlySalary/save", (req, res) => {
   const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
 
@@ -1364,21 +1399,25 @@ app.post("/monthlySalary/save", (req, res) => {
     return res.status(400).json({ success: false, message: "Missing required fields" });
   }
 
+  // Get today's date in YYYY-MM-DD format
+  const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
+
   // 1️⃣ Save salary record
   db.run(
     `
     INSERT INTO monthly_salary_payments 
-    (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay, paid_date)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
-    [empId, empName, paid, month, lop, paidAmount, actualToPay],
+    [empId, empName, paid, month, lop, paidAmount, actualToPay, paidDate],
     function (err) {
       if (err) {
         console.error("Error saving salary:", err);
         return res.status(500).json({ success: false, message: "Database error" });
       }
 
-      const salaryId = this.lastID;
+      // Rest of your existing logic...
+
 
       // ✅ Proceed only if paid = "Yes"
       if (paid === "Yes" && paidAmount > 0) {
@@ -1557,17 +1596,33 @@ app.post("/monthlySalary/save", (req, res) => {
 // ✅ Pay Expense and Record Transaction (with account deduction)
 app.post("/pay-expense", (req, res) => {
   const { expense_id, paid_amount, paid_date } = req.body;
-
+   
   if (!expense_id || !paid_amount || !paid_date) {
     return res.status(400).json({ success: false, message: "Missing fields" });
   }
+
+  const amount = parseFloat(paid_amount);
+  const paidMonthYear = new Date(paid_date).toLocaleString("default", {
+    month: "short",
+    year: "numeric",
+  });
+
+  // ⏰ Generate 4-digit time code (HHMM)
+  const now = new Date();
+  const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
+    .getMinutes()
+    .toString()
+    .padStart(2, "0")}`;
 
   // 1️⃣ Get Expense details
   db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
     if (err) return res.status(500).json({ success: false, message: err.message });
     if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
 
-    const amount = parseFloat(paid_amount);
+    const expenseType = expense.type || expense.description || "General";
+    const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
+    const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
+    const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
 
     // 2️⃣ Get Current Account
     db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
@@ -1575,112 +1630,57 @@ app.post("/pay-expense", (req, res) => {
         return res.status(500).json({ success: false, message: "Current account not found" });
       }
 
-      // 3️⃣ Case 1: Enough balance in Current
-      if (currentAcc.balance >= amount) {
-        const newBalance = currentAcc.balance - amount;
-
-        db.serialize(() => {
-          // 🧾 Update Expense
-          db.run(
-            `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
-            [paid_date, amount, expense_id]
-          );
-
-          // 💰 Deduct from Current
-          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id]);
-
-          // 📒 Record Transaction
-          db.run(
-            `
-            INSERT INTO transactions 
-              (account_number, type, amount, description, related_module, related_id, created_at)
-            VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
-            `,
-            [
-              currentAcc.account_number,
-              amount,
-              `Expense payment for ${expense.type || expense.description}`,
-              expense.auto_id,
-            ]
-          );
-
-          return res.json({
-            success: true,
-            message: `Expense paid successfully. ₹${amount} debited from Current Account.`,
-          });
-        });
-      } 
-      // 4️⃣ Case 2: Not enough → auto-transfer from Capital
-      else {
-        const needed = amount - currentAcc.balance;
-
-        db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
-          if (err || !capitalAcc) {
-            return res.status(500).json({ success: false, message: "Capital account not found" });
-          }
-
-          if (capitalAcc.balance < needed) {
-            return res.status(400).json({
-              success: false,
-              message: "Insufficient funds in both accounts",
-            });
-          }
-
-          const newCapitalBalance = capitalAcc.balance - needed;
-          const newCurrentBalance = currentAcc.balance + needed - amount;
-
-          db.serialize(() => {
-            // 🏦 Transfer from Capital → Current
-            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCapitalBalance, capitalAcc.account_id]);
-            db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newCurrentBalance, currentAcc.account_id]);
-
-            // 🧾 Update Expense
-            db.run(
-              `UPDATE expenses SET paid_date = ?, paid_amount = ?, status = 'Paid' WHERE auto_id = ?`,
-              [paid_date, amount, expense_id]
-            );
-
-            // 📒 Record Transfer Transaction
-            db.run(
-              `
-              INSERT INTO transactions 
-                (account_number, type, amount, description, related_module, related_id, created_at)
-              VALUES (?, 'Transfer', ?, ?, 'Expense', ?, datetime('now'))
-              `,
-              [
-                capitalAcc.account_number,
-                needed,
-                `Transfer ₹${needed} from Capital → Current for expense payment`,
-                expense.auto_id,
-              ]
-            );
-
-            // 📒 Record Actual Payment Transaction
-            db.run(
-              `
-              INSERT INTO transactions 
-                (account_number, type, amount, description, related_module, related_id, created_at)
-              VALUES (?, 'Debit', ?, ?, 'Expense', ?, datetime('now'))
-              `,
-              [
-                currentAcc.account_number,
-                amount,
-                `Expense payment for ${expense.type || expense.description}`,
-                expense.auto_id,
-              ]
-            );
-
-            return res.json({
-              success: true,
-              message: `Expense paid successfully. ₹${needed} transferred from Capital → Current, and ₹${amount} paid.`,
-            });
-          });
+      // ❌ If insufficient balance
+      if (currentAcc.balance < amount) {
+        return res.status(400).json({
+          success: false,
+          message: `Insufficient funds. Current balance: ₹${currentAcc.balance.toLocaleString()} — required: ₹${amount.toLocaleString()}`,
         });
       }
+
+      // ✅ Enough balance → proceed with payment
+      const prevBalance = currentAcc.balance;
+      const newBalance = prevBalance - amount;
+
+      db.serialize(() => {
+        // 💰 Update Current Account
+        db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id]);
+
+        // 📒 Record Transaction (Debit)
+        db.run(
+          `
+          INSERT INTO transactions 
+            (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+          VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))
+          `,
+          [transactionId, currentAcc.account_number, amount, description, prevBalance, newBalance]
+        );
+
+        // 🧾 Insert or Update expense_payments
+        db.run(
+          `
+          INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+          VALUES (?, ?, ?, ?, ?, 'Paid')
+          ON CONFLICT(expense_id, month_year)
+          DO UPDATE SET 
+            paid_amount = excluded.paid_amount,
+            paid_date = excluded.paid_date,
+            status = 'Paid';
+          `,
+          [expense_id, paidMonthYear, expense.amount || amount, amount, paid_date]
+        );
+
+        return res.json({
+          success: true,
+          message: `Expense paid successfully. ₹${amount} debited from Current Account.`,
+          transaction_id: transactionId,
+          previous_balance: prevBalance,
+          updated_balance: newBalance,
+        });
+      });
     });
   });
 });
-
 
 
 
@@ -1730,12 +1730,17 @@ app.get("/monthlySalary", (req, res) => {
 //     res.json(formatted);
 //   });
 // });
+
 app.get("/getexpenses", (req, res) => {
   const { month } = req.query; // format: "YYYY-MM"
   if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
 
   const selectedYear = parseInt(month.split("-")[0]);
   const selectedMonth = parseInt(month.split("-")[1]);
+
+  // 🗓️ Convert "YYYY-MM" → "Nov 2025"
+  const date = new Date(`${month}-01`);
+  const formattedMonth = date.toLocaleString("default", { month: "short", year: "numeric" });
 
   const sql = `
     SELECT 
@@ -1747,17 +1752,17 @@ app.get("/getexpenses", (req, res) => {
       e.currency,
       e.raised_date,
       e.due_date,
-      e.status AS expense_status,   -- <-- status from expenses table
+      e.status AS expense_status,
       ep.paid_amount,
       ep.paid_date,
-      ep.status AS payment_status   -- <-- status from expense_payments table
+      ep.status AS payment_status
     FROM expenses e
     LEFT JOIN expense_payments ep
       ON e.auto_id = ep.expense_id AND ep.month_year = ?
     ORDER BY e.auto_id DESC
   `;
 
-  db.all(sql, [month], (err, rows) => {
+  db.all(sql, [formattedMonth], (err, rows) => {
     if (err) {
       console.error("DB Query Error:", err.message);
       return res.status(500).json({ error: err.message });
@@ -1787,16 +1792,17 @@ app.get("/getexpenses", (req, res) => {
       currency: row.currency,
       raised_date: row.raised_date,
       due_date: row.due_date,
-      paid_amount: row.paid_amount || null,
-      paid_date: row.paid_date || null,
-      // Prioritize payment table status if exists, else fallback to expense table status
-      paymentstatus: row.payment_status || null,
-      expensestatus: row.expense_status || null,
+      paid_amount: row.paid_amount || 0,
+      paid_date: row.paid_date || "Not Paid",
+      paymentstatus: row.payment_status || "Pending",
+      expensestatus: row.expense_status || "Raised",
     }));
 
     res.json(formatted);
+    console.log(formatted);
   });
 });
+
 
 // POST expense
 app.post("/postexpenses", (req, res) => {
@@ -1867,6 +1873,49 @@ app.put("/markaspaid/:id", (req, res) => {
   );
 });
 
+// ✅ Get pending salaries summary
+
+app.get("/api/pending-salaries", (req, res) => {
+
+  const sql =     `SELECT 
+
+      employee_id,
+
+      employee_name,
+
+      COUNT(month) AS pending_months_count,
+
+      GROUP_CONCAT(month, ', ') AS pending_months
+
+    FROM monthly_salary_payments
+
+    WHERE paid = 'No'
+
+    GROUP BY employee_id, employee_name
+
+    ORDER BY employee_name;`
+;
+
+  db.all(sql, [], (err, rows) => {
+
+    if (err) {
+
+      console.error("Error fetching pending salaries:", err);
+
+      res.status(500).json({ success: false, message: "Database error" });
+
+    } else {
+
+      res.json({ success: true, data: rows });
+
+      console.log(rows)
+
+    }
+
+  });
+
+});
+ 
 
 
 
@@ -2359,11 +2408,168 @@ app.post("/accounts/transfer", (req, res) => {
   });
 });
 
-// Helper: convert YYYY-MM string to comparable key
-function monthKey(dateStr) {
-  if (!dateStr) return null;
-  return dateStr.slice(0, 7);
-}
+app.get("/forecast", async (req, res) => {
+  try {
+    console.log("📊 Forecast API Called");
+
+    // Read user input for months range
+    const monthsAhead = parseInt(req.query.monthsAhead) || 6; // default: 6 future months
+    const monthsBack = parseInt(req.query.monthsBack) || 6;   // default: 6 past months
+
+    // ✅ Actual Income (received invoices)
+    const pastIncome = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', invoice_date) AS month,
+        SUM(invoice_value + gst_amount) AS total_income
+      FROM invoices
+      WHERE received = 'Yes' AND invoice_date IS NOT NULL
+      GROUP BY month
+      ORDER BY month;
+    `);
+
+    // ✅ Future Income (Active Projects)
+    const activeProjects = await runQuery(`
+      SELECT 
+        monthlyBilling,
+        invoiceCycle,
+        startDate,
+        endDate
+      FROM Projects
+      WHERE active = 'Yes' AND monthlyBilling IS NOT NULL;
+    `);
+
+    const today = new Date();
+    const futureIncomeMap = {};
+
+    // Generate forecast dynamically based on user input
+    for (let i = -monthsBack; i < monthsAhead; i++) {
+      const month = new Date(today);
+      month.setMonth(today.getMonth() + i);
+      const monthKey = month.toISOString().slice(0, 7); // YYYY-MM
+
+      let monthlySum = 0;
+      activeProjects.forEach((p) => {
+        if (!p.startDate || p.startDate > monthKey) return;
+        if (p.endDate && p.endDate < monthKey) return;
+
+        if (p.invoiceCycle === "Quarterly" && i % 3 !== 0) return;
+        monthlySum += p.monthlyBilling || 0;
+      });
+
+      if (!futureIncomeMap[monthKey]) futureIncomeMap[monthKey] = 0;
+      futureIncomeMap[monthKey] += monthlySum;
+    }
+
+    const futureIncome = Object.entries(futureIncomeMap).map(([month, expected_income]) => ({
+      month,
+      expected_income,
+    }));
+
+    // ✅ Actual Expenses (Paid)
+    const pastExpenses = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', paid_date) AS month,
+        SUM(paid_amount) AS total_expense
+      FROM expenses
+      WHERE status = 'Paid' AND paid_date IS NOT NULL
+      GROUP BY month
+      ORDER BY month;
+    `);
+
+    // ✅ Future Non-Regular Expenses
+    const futureNonRegularExpenses = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', due_date) AS month,
+        SUM(amount) AS expected_expense
+      FROM expenses
+      WHERE regular = 'No'
+        AND status IN ('Raised','In Process')
+        AND due_date > date('now')
+      GROUP BY month;
+    `);
+
+    // ✅ Future Regular Expenses (Dynamic)
+    const monthUnions = Array.from({ length: monthsAhead }, (_, i) => `SELECT ${i} AS n`).join(" UNION ");
+    const futureRegularExpenses = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', date('now', '+' || n || ' month')) AS month,
+        SUM(amount) AS expected_expense
+      FROM expenses, (${monthUnions})
+      WHERE regular = 'Yes'
+      GROUP BY month;
+    `);
+
+    // ✅ Salaries — Actual (monthly_salary_payments)
+    const pastSalaries = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', paid_date) AS month,
+        SUM(paid_amount) AS total_salaries
+      FROM monthly_salary_payments
+      WHERE paid = 'Yes' AND paid_date IS NOT NULL
+      GROUP BY month
+      ORDER BY month;
+    `);
+
+    // ✅ Forecast Salaries (salary_payments)
+    const futureSalaries = await runQuery(`
+      SELECT 
+        strftime('%Y-%m', date('now', '+' || n || ' month')) AS month,
+        SUM(net_takehome) AS expected_salaries
+      FROM salary_payments, (${monthUnions})
+      WHERE paid = 'No'
+      GROUP BY month;
+    `);
+
+    // ✅ Merge all outgoing (expenses + salaries)
+    const mergedExpensesMap = {};
+
+    const mergeData = (dataArray, field) => {
+      dataArray.forEach((item) => {
+        if (!item.month) return;
+        if (!mergedExpensesMap[item.month]) mergedExpensesMap[item.month] = 0;
+        mergedExpensesMap[item.month] += item[field] || 0;
+      });
+    };
+
+    mergeData(pastExpenses, "total_expense");
+    mergeData(pastSalaries, "total_salaries");
+    mergeData(futureNonRegularExpenses, "expected_expense");
+    mergeData(futureRegularExpenses, "expected_expense");
+    mergeData(futureSalaries, "expected_salaries");
+
+    const allExpenses = Object.entries(mergedExpensesMap).map(([month, expected_expense]) => ({
+      month,
+      expected_expense,
+    }));
+
+    // ✅ Combine everything neatly for frontend
+    const response = {
+      pastIncome,
+      futureIncome,
+      pastExpenses: [...pastExpenses, ...pastSalaries],
+      futureExpenses: allExpenses,
+    };
+
+    console.log("✅ Forecast Data Prepared for", { monthsBack, monthsAhead });
+    res.json(response);
+  } catch (err) {
+    console.error("❌ Forecast API Error:", err.message);
+    res.status(500).json({
+      error: err.message,
+      pastIncome: [],
+      futureIncome: [],
+      pastExpenses: [],
+      futureExpenses: [],
+    });
+  }
+});
+
+
+
+
+
+
+
 
 // Helper: run SQL wrapped in a Promise
 function runQuery(db, sql, params = []) {
