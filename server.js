@@ -60,33 +60,33 @@ CREATE TABLE IF NOT EXISTS ClientsTable (
 )
 `);
 
-db.run(
-  `CREATE TABLE IF NOT EXISTS Projects (
-  projectID TEXT PRIMARY KEY,
-  clientID INTEGER NOT NULL,
-  startDate TEXT,
-  endDate TEXT,
-  projectName TEXT,
-  projectDescription TEXT,
-  skill TEXT,
-  projectLocation TEXT,
-  spoc TEXT,
-  mailID TEXT,
-  mobileNo TEXT,
-  billingType TEXT,
-  billRate REAL,
-  monthlyBilling REAL,
-  employeeID TEXT,
-  employeeName TEXT,
-  poNumber TEXT,
-  purchaseOrder TEXT,
-  purchaseOrderValue REAL,
-  active TEXT CHECK(active IN ('Yes','No')),
-  invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly', 'Quarterly')),
-  FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
-);
-`
-)
+// db.run(
+//   `CREATE TABLE IF NOT EXISTS Projects (
+//   projectID TEXT PRIMARY KEY,
+//   clientID INTEGER NOT NULL,
+//   startDate TEXT,
+//   endDate TEXT,
+//   projectName TEXT,
+//   projectDescription TEXT,
+//   skill TEXT,
+//   projectLocation TEXT,
+//   spoc TEXT,
+//   mailID TEXT,
+//   mobileNo TEXT,
+//   billingType TEXT,
+//   billRate REAL,
+//   monthlyBilling REAL,
+//   employeeID TEXT,
+//   employeeName TEXT,
+//   poNumber TEXT,
+//   purchaseOrder TEXT,
+//   purchaseOrderValue REAL,
+//   active TEXT CHECK(active IN ('Yes','No')),
+//   invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly', 'Quarterly')),
+//   FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
+// )
+// `
+// );
 // db.serialize(() => {
 //   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
 //     if (err) console.error("Error dropping table:", err.message);
@@ -94,6 +94,37 @@ db.run(
 //   });
 // });
 // Create employees table if not exists
+
+
+db.run(
+  `CREATE TABLE IF NOT EXISTS Projects (
+    projectID TEXT PRIMARY KEY,
+    clientID INTEGER NOT NULL,
+    startDate TEXT,
+    endDate TEXT,
+    projectName TEXT,
+    projectDescription TEXT,
+    skill TEXT,
+    projectLocation TEXT,
+    spoc TEXT,
+    mailID TEXT,
+    mobileNo TEXT,
+    billingType TEXT,
+    billRate REAL,
+    monthlyBilling REAL,
+    employeeID TEXT,
+    employeeName TEXT,
+    poNumber TEXT,
+    purchaseOrder TEXT,
+    purchaseOrderValue REAL,
+    active TEXT CHECK(active IN ('Yes','No')),
+    invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly','Quarterly')),
+    FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
+  )`
+);
+
+
+
 db.run(`
 CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
