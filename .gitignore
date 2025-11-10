@@ -1,1 +1,10 @@
-Accounting.db-wal
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Node modules
+node_modules/
+
+# Environment files
+.env
