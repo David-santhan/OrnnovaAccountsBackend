@@ -41,7 +41,6 @@ const db = new sqlite3.Database("./Accounting.db", (err) => {
   db.run("PRAGMA journal_mode=WAL;");      // enable WAL
   db.configure("busyTimeout", 5000);       // wait 5 seconds if busy
 });
-app.locals.db = db;
 
 
 db.run(`
@@ -60,44 +59,8 @@ CREATE TABLE IF NOT EXISTS ClientsTable (
 )
 `);
 
-// db.run(
-//   `CREATE TABLE IF NOT EXISTS Projects (
-//   projectID TEXT PRIMARY KEY,
-//   clientID INTEGER NOT NULL,
-//   startDate TEXT,
-//   endDate TEXT,
-//   projectName TEXT,
-//   projectDescription TEXT,
-//   skill TEXT,
-//   projectLocation TEXT,
-//   spoc TEXT,
-//   mailID TEXT,
-//   mobileNo TEXT,
-//   billingType TEXT,
-//   billRate REAL,
-//   monthlyBilling REAL,
-//   employeeID TEXT,
-//   employeeName TEXT,
-//   poNumber TEXT,
-//   purchaseOrder TEXT,
-//   purchaseOrderValue REAL,
-//   active TEXT CHECK(active IN ('Yes','No')),
-//   invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly', 'Quarterly')),
-//   FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
-// )
-// `
-// );
-// db.serialize(() => {
-//   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
-//     if (err) console.error("Error dropping table:", err.message);
-//     else console.log("transactions table dropped");
-//   });
-// });
-// Create employees table if not exists
-
-
-db.run(
-  `CREATE TABLE IF NOT EXISTS Projects (
+db.run(`
+  CREATE TABLE IF NOT EXISTS Projects (
     projectID TEXT PRIMARY KEY,
     clientID INTEGER NOT NULL,
     startDate TEXT,
@@ -112,19 +75,23 @@ db.run(
     billingType TEXT,
     billRate REAL,
     monthlyBilling REAL,
-    employeeID TEXT,
-    employeeName TEXT,
+    employees TEXT, -- ✅ stores JSON array of employee objects
     poNumber TEXT,
     purchaseOrder TEXT,
     purchaseOrderValue REAL,
     active TEXT CHECK(active IN ('Yes','No')),
-    invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly','Quarterly')),
+    invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly', 'Quarterly')),
     FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
-  )`
-);
+  );
+`);
 
-
-
+// db.serialize(() => {
+//   db.run("DROP TABLE IF EXISTS transactions;", (err) => {
+//     if (err) console.error("Error dropping table:", err.message);
+//     else console.log("transactions table dropped");
+//   });
+// });
+// Create employees table if not exists
 db.run(`
 CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,6 +174,7 @@ db.run(`
     invoice_value REAL NOT NULL,
     gst_amount REAL NOT NULL,
     due_date TEXT NOT NULL,
+    non_billable_days INTEGER ,
     billable_days INTEGER NOT NULL,
     received TEXT CHECK(received IN ('Yes','No')) DEFAULT 'No',
     received_date TEXT,
@@ -409,8 +377,7 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
     billingType,
     billRate,
     monthlyBilling,
-    employeeID,
-    employeeName,
+    employees, // ✅ expect array from frontend
     poNumber,
     purchaseOrderValue,
     active,
@@ -426,10 +393,20 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
       return res.status(500).json({ error: "Failed to generate project ID" });
     }
 
+    // Convert employees array to JSON string for storage in SQLite
+    let employeesData = [];
+    try {
+      employeesData = typeof employees === "string" ? JSON.parse(employees) : employees;
+    } catch (e) {
+      console.error("Error parsing employees JSON:", e);
+    }
+
     const query = `
       INSERT INTO Projects
-      (projectID, clientID, startDate, endDate, projectName, projectDescription, skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate, monthlyBilling, employeeID, employeeName, poNumber, purchaseOrder, purchaseOrderValue, active, invoiceCycle)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (projectID, clientID, startDate, endDate, projectName, projectDescription, skill, projectLocation,
+       spoc, mailID, mobileNo, billingType, billRate, monthlyBilling, employees, poNumber,
+       purchaseOrder, purchaseOrderValue, active, invoiceCycle)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     db.run(
@@ -449,8 +426,7 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
         billingType,
         billRate,
         monthlyBilling,
-        employeeID,
-        employeeName,
+        JSON.stringify(employeesData), // ✅ store as JSON
         poNumber,
         purchaseOrderFile,
         purchaseOrderValue,
@@ -462,19 +438,68 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
           console.error("DB Error:", err.message);
           return res.status(500).json({ error: err.message });
         }
+
         res.json({ projectID: uniqueID, message: "Project added successfully" });
       }
     );
   });
 });
 
+
 // -------- GET PROJECTS API --------
 app.get("/getprojects", (req, res) => {
-  db.all("SELECT * FROM Projects", [], (err, rows) => {
+  // 1️⃣ Fetch all projects
+  db.all("SELECT * FROM Projects", [], (err, projects) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+
+    // 2️⃣ Fetch all employees for lookup
+    db.all("SELECT employee_id, employee_name FROM employees", [], (err, employees) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      // 3️⃣ Create quick lookup map for employee names
+      const empMap = new Map(employees.map(e => [e.employee_id, e.employee_name]));
+
+      // 4️⃣ Process each project to include full employee details
+      const formattedProjects = projects.map(project => {
+        let employeeData = [];
+
+        if (project.employees) {
+          try {
+            const empArray = JSON.parse(project.employees);
+
+            if (Array.isArray(empArray)) {
+              empArray.forEach(emp => {
+                if (typeof emp === "string") {
+                  // Case 1: Employees stored as ["EMP001", "EMP002"]
+                  employeeData.push({
+                    id: emp,
+                    name: empMap.get(emp) || "Unknown",
+                  });
+                } else if (emp.id) {
+                  // Case 2: Employees stored as [{ id, name }]
+                  employeeData.push({
+                    id: emp.id,
+                    name: empMap.get(emp.id) || emp.name || "Unknown",
+                  });
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Error parsing employees JSON for project:", e);
+          }
+        }
+
+        return {
+          ...project,
+          employees: employeeData, // ✅ Now always array of {id, name}
+        };
+      });
+
+      res.json(formattedProjects);
+    });
   });
 });
+
 
 // POST API (add new employee)
 app.post(
@@ -544,20 +569,50 @@ app.get("/getemployees", (req, res) => {
 
 // GET AVailable Employees for Projects
 app.get("/getAvailableEmployees", (req, res) => {
-  const sql = `
-    SELECT employee_id, employee_name
-    FROM employees
-    WHERE employee_id NOT IN (
-      SELECT employeeID FROM Projects WHERE employeeID IS NOT NULL
-    )
-  `;
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows); // 👈 ensures it's an array
+  // 1️⃣ Fetch all employees
+  db.all(`SELECT employee_id, employee_name FROM employees`, [], (err, allEmployees) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    // 2️⃣ Fetch all projects' employees JSON
+    db.all(`SELECT employees FROM Projects WHERE employees IS NOT NULL`, [], (err, projectRows) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      // 3️⃣ Collect all assigned employee IDs
+      const assignedEmployeeIDs = new Set();
+
+      projectRows.forEach((row) => {
+        if (row.employees) {
+          try {
+            const empData = JSON.parse(row.employees);
+
+            if (Array.isArray(empData)) {
+              empData.forEach((emp) => {
+                if (typeof emp === "string") {
+                  // ✅ Case 1: employees stored as ["EMP001", "EMP002"]
+                  assignedEmployeeIDs.add(emp);
+                } else if (emp.id) {
+                  // ✅ Case 2: employees stored as [{id:"EMP001", name:"David"}]
+                  assignedEmployeeIDs.add(emp.id);
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Invalid JSON in employees field:", e);
+          }
+        }
+      });
+
+      // 4️⃣ Filter out assigned employees
+      const availableEmployees = allEmployees.filter(
+        (emp) => !assignedEmployeeIDs.has(emp.employee_id)
+      );
+
+      res.json(availableEmployees);
+    });
   });
 });
+
+
 
 // ✅ GET all salaries
 app.get("/getallsalaries", (req, res) => {
@@ -972,34 +1027,89 @@ app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
   const data = req.body;
   const file = req.file ? req.file.filename : null;
 
-  const sql = `
+  // ✅ Handle employees JSON array safely
+  let employeesData = [];
+try {
+  if (data.employees) {
+    if (typeof data.employees === "string") {
+      employeesData = JSON.parse(data.employees);
+    } else if (Array.isArray(data.employees)) {
+      employeesData = data.employees;
+    } else if (typeof data.employees === "object") {
+      employeesData = [data.employees];
+    }
+  }
+} catch (err) {
+  console.error("Error parsing employees JSON:", err);
+  employeesData = [];
+}
+
+
+  // ✅ Base SQL (purchaseOrder condition handled below)
+  let sql = `
     UPDATE Projects
-    SET clientID = ?, projectName = ?, projectDescription = ?, startDate = ?, 
-        endDate = ?, skill = ?, projectLocation = ?, spoc = ?, mailID = ?, mobileNo = ?, 
-        billingType = ?, billRate = ?, monthlyBilling = ?, employeeID = ?, employeeName = ?, 
-        poNumber = ?, purchaseOrderValue = ?, active = ? ,invoiceCycle = ?
-        ${file ? `, purchaseOrder = ?` : ""}
-    WHERE projectID = ?
+    SET 
+      clientID = ?, 
+      projectName = ?, 
+      projectDescription = ?, 
+      startDate = ?, 
+      endDate = ?, 
+      skill = ?, 
+      projectLocation = ?, 
+      spoc = ?, 
+      mailID = ?, 
+      mobileNo = ?, 
+      billingType = ?, 
+      billRate = ?, 
+      monthlyBilling = ?, 
+      employees = ?, 
+      poNumber = ?, 
+      purchaseOrderValue = ?, 
+      active = ?, 
+      invoiceCycle = ?
   `;
 
+  // ✅ Add purchaseOrder if file uploaded
+  if (file) sql += `, purchaseOrder = ?`;
+
+  sql += ` WHERE projectID = ?`;
+
+  // ✅ Prepare parameters
   const params = [
-    data.clientID, data.projectName, data.projectDescription, data.startDate,
-    data.endDate, data.skill, data.projectLocation, data.spoc, data.mailID, data.mobileNo,
-    data.billingType, data.billRate, data.monthlyBilling, data.employeeID, data.employeeName,
-    data.poNumber, data.purchaseOrderValue, data.active,data.invoiceCycle
+    data.clientID,
+    data.projectName,
+    data.projectDescription,
+    data.startDate,
+    data.endDate,
+    data.skill,
+    data.projectLocation,
+    data.spoc,
+    data.mailID,
+    data.mobileNo,
+    data.billingType,
+    data.billRate,
+    data.monthlyBilling,
+    JSON.stringify(employeesData || []), // ✅ Store employees as JSON
+    data.poNumber,
+    data.purchaseOrderValue,
+    data.active,
+    data.invoiceCycle,
   ];
 
   if (file) params.push(file);
   params.push(id);
 
+  // ✅ Execute update query
   db.run(sql, params, function (err) {
     if (err) {
-      console.error(err);
-      return res.json({ success: false, error: err.message });
+      console.error("DB Error:", err);
+      return res.status(500).json({ success: false, error: err.message });
     }
+
     res.json({ success: true, changes: this.changes });
   });
 });
+
 
 // Update Client by ID
 app.put("/update-client/:id", (req, res) => {
@@ -1401,28 +1511,6 @@ app.put("/updateinvoices/:id", (req, res) => {
 
 
 
-// app.post("/monthlySalary/save", (req, res) => {
-//   const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
-
-//   if (!empId || !empName || !month) {
-//     return res.status(400).json({ success: false, message: "Missing required fields" });
-//   }
-
-//   // 1️⃣ Save salary record
-//   db.run(
-//     `
-//     INSERT INTO monthly_salary_payments 
-//     (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
-//     VALUES (?, ?, ?, ?, ?, ?, ?)
-//     `,
-//     [empId, empName, paid, month, lop, paidAmount, actualToPay],
-//     function (err) {
-//       if (err) {
-//         console.error("Error saving salary:", err);
-//         return res.status(500).json({ success: false, message: "Database error" });
-//       }
-
-//       const salaryId = this.lastID;
 app.post("/monthlySalary/save", (req, res) => {
   const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
 
@@ -1430,25 +1518,21 @@ app.post("/monthlySalary/save", (req, res) => {
     return res.status(400).json({ success: false, message: "Missing required fields" });
   }
 
-  // Get today's date in YYYY-MM-DD format
-  const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
-
   // 1️⃣ Save salary record
   db.run(
     `
     INSERT INTO monthly_salary_payments 
-    (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay, paid_date)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     `,
-    [empId, empName, paid, month, lop, paidAmount, actualToPay, paidDate],
+    [empId, empName, paid, month, lop, paidAmount, actualToPay],
     function (err) {
       if (err) {
         console.error("Error saving salary:", err);
         return res.status(500).json({ success: false, message: "Database error" });
       }
 
-      // Rest of your existing logic...
-
+      const salaryId = this.lastID;
 
       // ✅ Proceed only if paid = "Yes"
       if (paid === "Yes" && paidAmount > 0) {
@@ -2602,148 +2686,17 @@ app.get("/forecast", async (req, res) => {
 
 
 
-// Helper: run SQL wrapped in a Promise
-function runQuery(db, sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
-  });
-}
 
-// Simple linear regression for forecasting numeric array
-function linearRegressionForecast(values, predictMonths = 3) {
-  const n = values.length;
-  if (n === 0) return Array(predictMonths).fill(0);
 
-  let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
-  for (let i = 0; i < n; i++) {
-    const x = i;
-    const y = values[i] || 0;
-    sumX += x; sumY += y; sumXX += x*x; sumXY += x*y;
-  }
 
-  const denom = n*sumXX - sumX*sumX;
-  let slope = 0, intercept = sumY/n;
-  if (denom !== 0) slope = (n*sumXY - sumX*sumY)/denom;
 
-  const results = [];
-  for (let k = 0; k < predictMonths; k++) {
-    const x = n + k;
-    let y = intercept + slope * x;
-    if (y < 0) y = 0;
-    results.push(Number(y.toFixed(2)));
-  }
-  return results;
-}
 
-// Endpoint: GET /monthly-summary?months=12&forecast=3
-// Endpoint: GET /monthly-summary?months=12&forecast=3
-app.get("/monthly-summary", async (req, res) => {
-  const db = req.app.locals.db;
-  const months = parseInt(req.query.months || "12", 10);
-  const forecastMonths = parseInt(req.query.forecast || "3", 10); // future months to predict
 
-  try {
-    // 1️⃣ Fetch historical transaction data
-    const transRows = await runQuery(db, `
-      SELECT strftime('%Y-%m', created_at) as month,
-        SUM(CASE WHEN type='Credit' THEN amount ELSE 0 END) as credit_total,
-        SUM(CASE WHEN type='Debit' THEN amount ELSE 0 END) as debit_total
-      FROM transactions
-      GROUP BY month
-      ORDER BY month ASC
-      LIMIT ?
-    `, [months]);
 
-    // Merge into summaryMap
-    const summaryMap = {};
-    transRows.forEach(r => {
-      const m = monthKey(r.month);
-      summaryMap[m] = {
-        month: m,
-        credit_total: Number(r.credit_total || 0),
-        debit_total: Number(r.debit_total || 0),
-      };
-    });
 
-    // Arrays for linear regression
-    const creditArr = Object.values(summaryMap).map(r => r.credit_total);
-    const debitArr = Object.values(summaryMap).map(r => r.debit_total);
 
-    // 2️⃣ Forecast future months using linear regression
-    const futureCredits = linearRegressionForecast(creditArr, forecastMonths);
-    const futureDebits = linearRegressionForecast(debitArr, forecastMonths);
 
-    // Determine labels for future months
-    const lastMonth = Object.keys(summaryMap).sort().slice(-1)[0]; // last historical month
-    const futureMonths = [];
-    if (lastMonth) {
-      let [year, month] = lastMonth.split("-").map(Number);
-      for (let i = 0; i < forecastMonths; i++) {
-        month++;
-        if (month > 12) { month = 1; year++; }
-        futureMonths.push(`${year.toString().padStart(4,'0')}-${month.toString().padStart(2,'0')}`);
-      }
-    }
 
-    // 3️⃣ Fetch active projects
-    const projects = await runQuery(db, `
-      SELECT startDate, endDate, monthlyBilling, employeeID, employeeName
-      FROM Projects
-      WHERE active='Yes'
-    `);
-
-    // Optionally: fetch salaries per employee if you have a Salaries table
-    const salariesMap = {};
-    const salaryRows = await runQuery(db, `
-      SELECT employeeID, month, SUM(paid_amount) as paid
-      FROM monthly_salary_payments
-      GROUP BY employeeID, month
-    `);
-    salaryRows.forEach(s => {
-      if (!salariesMap[s.employeeID]) salariesMap[s.employeeID] = {};
-      salariesMap[s.employeeID][monthKey(s.month)] = Number(s.paid || 0);
-    });
-
-    // 4️⃣ Append future months based on projects
-    futureMonths.forEach((m, i) => {
-      let projectIncome = 0;
-      let projectExpense = 0;
-
-      projects.forEach(p => {
-        const start = monthKey(p.startDate);
-        const end = monthKey(p.endDate);
-        if (start && end && m >= start && m <= end) {
-          projectIncome += Number(p.monthlyBilling || 0);
-
-          // Salary per assigned employee (if salary info available)
-          if (p.employeeID && salariesMap[p.employeeID] && salariesMap[p.employeeID][m]) {
-            projectExpense += salariesMap[p.employeeID][m];
-          } else {
-            // fallback if no salary info, optionally estimate
-            projectExpense += 0;
-          }
-        }
-      });
-
-      // Use project-based values for future month
-      summaryMap[m] = {
-        month: m,
-        credit_total: projectIncome,
-        debit_total: projectExpense, // future debits based on project salaries
-        forecast: true
-      };
-    });
-  
-
-    // 5️⃣ Return sorted summary
-    const summary = Object.values(summaryMap).sort((a,b) => a.month > b.month ? 1 : -1);
-    res.json({ success: true, data: summary });
-
-  } catch (err) {
-    console.error("Error in /monthly-summary:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-});
 
 
 
