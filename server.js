@@ -76,8 +76,7 @@ db.run(
   billingType TEXT,
   billRate REAL,
   monthlyBilling REAL,
-  employeeID TEXT,
-  employeeName TEXT,
+  employees TEXT, -- ✅ JSON array of employees
   poNumber TEXT,
   purchaseOrder TEXT,
   purchaseOrderValue REAL,
@@ -378,8 +377,7 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
     billingType,
     billRate,
     monthlyBilling,
-    employeeID,
-    employeeName,
+    employees, // ✅ from frontend as JSON
     poNumber,
     purchaseOrderValue,
     active,
@@ -388,17 +386,27 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
 
   const purchaseOrderFile = req.file ? req.file.filename : null;
 
-  // Generate unique projectID
   getUniqueProjectID(db, clientID, projectName, (err, uniqueID) => {
     if (err) {
       console.error("Error generating projectID:", err);
       return res.status(500).json({ error: "Failed to generate project ID" });
     }
 
+    let employeesData = [];
+    try {
+      employeesData = typeof employees === "string" ? JSON.parse(employees) : employees;
+    } catch (e) {
+      console.error("Error parsing employees JSON:", e);
+    }
+
     const query = `
-      INSERT INTO Projects
-      (projectID, clientID, startDate, endDate, projectName, projectDescription, skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate, monthlyBilling, employeeID, employeeName, poNumber, purchaseOrder, purchaseOrderValue, active, invoiceCycle)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO Projects (
+        projectID, clientID, startDate, endDate, projectName, projectDescription,
+        skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate,
+        monthlyBilling, employees, poNumber, purchaseOrder, purchaseOrderValue,
+        active, invoiceCycle
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     db.run(
@@ -418,8 +426,7 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
         billingType,
         billRate,
         monthlyBilling,
-        employeeID,
-        employeeName,
+        JSON.stringify(employeesData), // ✅ store JSON
         poNumber,
         purchaseOrderFile,
         purchaseOrderValue,
@@ -437,13 +444,35 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
   });
 });
 
+
 // -------- GET PROJECTS API --------
 app.get("/getprojects", (req, res) => {
   db.all("SELECT * FROM Projects", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
+
+    db.all("SELECT employee_id, employee_name FROM employees", [], (err, emps) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      const map = new Map(emps.map(e => [e.employee_id, e.employee_name]));
+      const formatted = rows.map(row => {
+        let parsed = [];
+        try {
+          const arr = JSON.parse(row.employees || "[]");
+          parsed = arr.map(emp => ({
+            id: typeof emp === "string" ? emp : emp.id,
+            name: typeof emp === "string" ? map.get(emp) : emp.name,
+          }));
+        } catch {
+          parsed = [];
+        }
+        return { ...row, employees: parsed };
+      });
+
+      res.json(formatted);
+    });
   });
 });
+
 
 // POST API (add new employee)
 app.post(
@@ -513,20 +542,32 @@ app.get("/getemployees", (req, res) => {
 
 // GET AVailable Employees for Projects
 app.get("/getAvailableEmployees", (req, res) => {
-  const sql = `
-    SELECT employee_id, employee_name
-    FROM employees
-    WHERE employee_id NOT IN (
-      SELECT employeeID FROM Projects WHERE employeeID IS NOT NULL
-    )
-  `;
-  db.all(sql, [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    res.json(rows); // 👈 ensures it's an array
+  db.all(`SELECT employee_id, employee_name FROM employees`, [], (err, allEmployees) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    db.all(`SELECT employees FROM Projects WHERE employees IS NOT NULL`, [], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+
+      const assigned = new Set();
+
+      rows.forEach(row => {
+        try {
+          const parsed = JSON.parse(row.employees || "[]");
+          parsed.forEach(emp => {
+            if (typeof emp === "string") assigned.add(emp);
+            else if (emp.id) assigned.add(emp.id);
+          });
+        } catch (e) {
+          console.error("JSON parse error:", e);
+        }
+      });
+
+      const available = allEmployees.filter(emp => !assigned.has(emp.employee_id));
+      res.json(available);
+    });
   });
 });
+
 
 // ✅ GET all salaries
 app.get("/getallsalaries", (req, res) => {
@@ -941,34 +982,81 @@ app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
   const data = req.body;
   const file = req.file ? req.file.filename : null;
 
-  const sql = `
+  // ✅ Handle employees JSON array safely
+  let employeesData = [];
+  try {
+    employeesData = typeof data.employees === "string"
+      ? JSON.parse(data.employees)
+      : data.employees;
+  } catch (err) {
+    console.error("Error parsing employees JSON:", err);
+  }
+
+  // ✅ Base SQL (purchaseOrder condition handled below)
+  let sql = `
     UPDATE Projects
-    SET clientID = ?, projectName = ?, projectDescription = ?, startDate = ?, 
-        endDate = ?, skill = ?, projectLocation = ?, spoc = ?, mailID = ?, mobileNo = ?, 
-        billingType = ?, billRate = ?, monthlyBilling = ?, employeeID = ?, employeeName = ?, 
-        poNumber = ?, purchaseOrderValue = ?, active = ? ,invoiceCycle = ?
-        ${file ? `, purchaseOrder = ?` : ""}
-    WHERE projectID = ?
+    SET 
+      clientID = ?, 
+      projectName = ?, 
+      projectDescription = ?, 
+      startDate = ?, 
+      endDate = ?, 
+      skill = ?, 
+      projectLocation = ?, 
+      spoc = ?, 
+      mailID = ?, 
+      mobileNo = ?, 
+      billingType = ?, 
+      billRate = ?, 
+      monthlyBilling = ?, 
+      employees = ?, 
+      poNumber = ?, 
+      purchaseOrderValue = ?, 
+      active = ?, 
+      invoiceCycle = ?
   `;
 
+  // ✅ Add purchaseOrder if file uploaded
+  if (file) sql += `, purchaseOrder = ?`;
+
+  sql += ` WHERE projectID = ?`;
+
+  // ✅ Prepare parameters
   const params = [
-    data.clientID, data.projectName, data.projectDescription, data.startDate,
-    data.endDate, data.skill, data.projectLocation, data.spoc, data.mailID, data.mobileNo,
-    data.billingType, data.billRate, data.monthlyBilling, data.employeeID, data.employeeName,
-    data.poNumber, data.purchaseOrderValue, data.active,data.invoiceCycle
+    data.clientID,
+    data.projectName,
+    data.projectDescription,
+    data.startDate,
+    data.endDate,
+    data.skill,
+    data.projectLocation,
+    data.spoc,
+    data.mailID,
+    data.mobileNo,
+    data.billingType,
+    data.billRate,
+    data.monthlyBilling,
+    JSON.stringify(employeesData || []), // ✅ Store employees as JSON
+    data.poNumber,
+    data.purchaseOrderValue,
+    data.active,
+    data.invoiceCycle,
   ];
 
   if (file) params.push(file);
   params.push(id);
 
+  // ✅ Execute update query
   db.run(sql, params, function (err) {
     if (err) {
-      console.error(err);
-      return res.json({ success: false, error: err.message });
+      console.error("DB Error:", err);
+      return res.status(500).json({ success: false, error: err.message });
     }
+
     res.json({ success: true, changes: this.changes });
   });
 });
+
 
 // Update Client by ID
 app.put("/update-client/:id", (req, res) => {
