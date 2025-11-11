@@ -2071,82 +2071,6 @@ app.post("/accounts", (req, res) => {
   );
 });
 
-// 🔹 Get All Accounts
-app.get("/accounts", (req, res) => {
-  db.all(`SELECT * FROM accounts`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-// 🔹 Hide / Unhide Account
-app.patch("/accounts/:id/hide", (req, res) => {
-  const { hide } = req.body;
-  db.run(`UPDATE accounts SET is_hidden = ? WHERE account_id = ?`, [hide, req.params.id], (err) => {
-    if (err) return res.status(400).json({ error: err.message });
-    res.json({ message: hide ? "Hidden" : "Visible" });
-  });
-});
-
-// 🔹 Get Account Balance
-app.get("/accounts/:number/balance", (req, res) => {
-  db.get(`SELECT balance FROM accounts WHERE account_number = ?`, [req.params.number], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: "Not found" });
-    res.json({ account_number: req.params.number, balance: row.balance });
-  });
-});
-
-// 🔹 Add Transaction (auto-linked)
-app.post("/transactions", (req, res) => {
-  const { account_number, amount, description, related_module, related_id } = req.body;
-  let type;
-
-  if (related_module === "Invoice") type = "Incoming";
-  else if (related_module === "Salary" || related_module === "Expense") type = "Outgoing";
-  else type = "Transfer";
-
-  const currentAcc = account_number;
-  const capitalAcc = "CAP-001"; // Change to your actual capital account number
-
-  if (type === "Outgoing") {
-    autoTransferIfInsufficient(db, currentAcc, capitalAcc, amount, (err) => {
-      if (err) return res.status(400).json({ error: err.message });
-      handleTransaction();
-    });
-  } else {
-    handleTransaction();
-  }
-
-  function handleTransaction() {
-    db.serialize(() => {
-      if (type === "Incoming")
-        db.run(`UPDATE accounts SET balance = balance + ? WHERE account_number = ?`, [amount, currentAcc]);
-      else if (type === "Outgoing")
-        db.run(`UPDATE accounts SET balance = balance - ? WHERE account_number = ?`, [amount, currentAcc]);
-
-      db.run(
-        `INSERT INTO transactions (account_number, type, description, amount, related_module, related_id)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [currentAcc, type, description, amount, related_module, related_id],
-        function (err) {
-          if (err) return res.status(400).json({ error: err.message });
-
-          // Update related table
-          if (related_module === "Salary") {
-            db.run(`UPDATE monthly_salary_payments SET paid='Yes', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
-          } else if (related_module === "Expense") {
-            db.run(`UPDATE expense_payments SET status='Paid', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
-          } else if (related_module === "Invoice") {
-            db.run(`UPDATE invoices SET received='Yes', received_date=date('now') WHERE id=?`, [related_id]);
-          }
-
-          res.json({ message: "Transaction recorded", transaction_id: this.lastID });
-        }
-      );
-    });
-  }
-});
-
 // 🔹 Get Transaction History (Joined)
 app.get("/transactionsOfBankAccounts", (req, res) => {
   const { account_number } = req.query;
@@ -2533,7 +2457,7 @@ app.get("/forecast", async (req, res) => {
     if (!db) throw new Error("Database not initialized");
 
     const monthsAhead = parseInt(req.query.monthsAhead) || 6;
-    const monthsBack = parseInt(req.query.monthsBack) || 6;
+    const monthsBackActuals = 24; // ✅ fetch past 2 years of actuals
 
     // ---------------------------------------------------
     // 🟢 1. ACTUAL INCOME (Invoices received)
@@ -2549,7 +2473,7 @@ app.get("/forecast", async (req, res) => {
     `);
 
     // ---------------------------------------------------
-    // 🔵 2. FORECASTED INCOME (Active Projects, future months)
+    // 🔵 2. FORECASTED INCOME (Active Projects)
     // ---------------------------------------------------
     const projects = await runQuery(db, `
       SELECT 
@@ -2565,7 +2489,7 @@ app.get("/forecast", async (req, res) => {
     const today = new Date();
     const futureIncomeMap = {};
 
-    for (let i = -monthsBack; i < monthsAhead; i++) {
+    for (let i = -monthsBackActuals; i < monthsAhead; i++) {
       const m = new Date(today);
       m.setMonth(today.getMonth() + i);
       futureIncomeMap[m.toISOString().slice(0, 7)] = 0;
@@ -2580,7 +2504,6 @@ app.get("/forecast", async (req, res) => {
         if (!start || monthKey < start) continue;
         if (end && monthKey > end) continue;
 
-        // Handle quarterly billing
         if (p.invoiceCycle === "Quarterly") {
           const [sy, sm] = start.split("-").map(Number);
           const [y, mo] = monthKey.split("-").map(Number);
@@ -2598,7 +2521,7 @@ app.get("/forecast", async (req, res) => {
     }));
 
     // ---------------------------------------------------
-    // 🔴 3. ACTUAL OUTGOING (Expense Payments + Paid Salaries)
+    // 🔴 3. ACTUAL OUTGOING (Expenses + Paid Salaries)
     // ---------------------------------------------------
     const pastExpenses = await runQuery(db, `
       SELECT 
@@ -2620,29 +2543,27 @@ app.get("/forecast", async (req, res) => {
       ORDER BY month;
     `);
 
+    console.log("✅ Actual salaries:", pastSalaries);
+    console.log("✅ Actual expenses:", pastExpenses);
+
     // Merge actual expenses + salaries
     const actualOutgoingMap = {};
     const mergeActual = (data, field) => {
       data.forEach((r) => {
         if (!r.month) return;
         if (!actualOutgoingMap[r.month]) actualOutgoingMap[r.month] = 0;
-        actualOutgoingMap[r.month] += r[field] || 0;
+        actualOutgoingMap[r.month] += Number(r[field] || 0);
       });
     };
     mergeActual(pastExpenses, "total_expense");
     mergeActual(pastSalaries, "total_salaries");
 
-    const actualOutgoing = Object.entries(actualOutgoingMap).map(([month, amount]) => ({
-      month,
-      amount,
-    }));
-
     // ---------------------------------------------------
-    // 🟣 4. FORECASTED OUTGOING (Regular Expenses + Active Employee Salaries)
+    // 🟣 4. FORECASTED OUTGOING (Regular Expenses + Future Salaries)
     // ---------------------------------------------------
-    const monthUnion = Array.from({ length: monthsAhead }, (_, i) => `SELECT ${i} AS n`).join(" UNION ");
 
     // (A) Regular Recurring Expenses
+    const monthUnion = Array.from({ length: monthsAhead }, (_, i) => `SELECT ${i} AS n`).join(" UNION ");
     const futureRegularExpenses = await runQuery(db, `
       SELECT 
         strftime('%Y-%m', date('now', '+' || n || ' month')) AS month,
@@ -2652,13 +2573,7 @@ app.get("/forecast", async (req, res) => {
       GROUP BY month;
     `);
 
-    // (B) Forecasted Employee Salaries (active only, from joining date)
-    const forecastMonthsArr = Array.from({ length: monthsAhead }, (_, i) => {
-      const m = new Date();
-      m.setMonth(m.getMonth() + i);
-      return m.toISOString().slice(0, 7);
-    });
-
+    // (B) Forecasted Employee Salaries (using net_takehome, from joining date)
     const salaryRecords = await runQuery(db, `
       SELECT 
         e.employee_id,
@@ -2670,7 +2585,8 @@ app.get("/forecast", async (req, res) => {
         sp.month AS salary_month,
         sp.gross_salary,
         sp.net_takehome,
-        sp.paid
+        sp.paid,
+        sp.paid_date
       FROM employees e
       LEFT JOIN salary_payments sp 
         ON LOWER(TRIM(e.employee_id)) = LOWER(TRIM(sp.employee_id))
@@ -2678,59 +2594,90 @@ app.get("/forecast", async (req, res) => {
       ORDER BY e.employee_name;
     `);
 
-    // Step 1: Find latest salary for each employee
     const latestSalaryMap = {};
     salaryRecords.forEach((r) => {
-      if (!r.employee_id || !r.gross_salary) return;
+      if (!r.employee_id || !r.net_takehome) return;
       const existing = latestSalaryMap[r.employee_id];
       if (!existing || (r.salary_month && r.salary_month > existing.salary_month)) {
         latestSalaryMap[r.employee_id] = {
           employee_id: r.employee_id,
           employee_name: r.employee_name,
           email: r.email,
-          gross_salary: Number(r.gross_salary),
           net_takehome: Number(r.net_takehome),
-          paid: r.paid,
           date_of_joining: r.date_of_joining,
           project_ending: r.project_ending,
         };
       }
     });
 
-    // Step 2: Forecast month-by-month based on join date
+    // Actual salary payments
+    const salaryPayments = await runQuery(db, `
+      SELECT 
+        LOWER(TRIM(employee_id)) AS employee_id,
+        strftime('%Y-%m', paid_date) AS month,
+        SUM(paid_amount) AS total_paid
+      FROM monthly_salary_payments
+      WHERE paid = 'Yes' AND paid_date IS NOT NULL
+      GROUP BY employee_id, month;
+    `);
+
+    const actualSalaryPaidMap = {};
+    salaryPayments.forEach((r) => {
+      if (!r.month) return;
+      if (!actualSalaryPaidMap[r.month]) actualSalaryPaidMap[r.month] = 0;
+      actualSalaryPaidMap[r.month] += Number(r.total_paid || 0);
+    });
+
+    // Build month range (past + future)
+    const startDate = new Date();
+    startDate.setMonth(startDate.getMonth() - monthsBackActuals);
+    const forecastMonthsArr = Array.from({ length: monthsAhead + monthsBackActuals }, (_, i) => {
+      const m = new Date(startDate);
+      m.setMonth(startDate.getMonth() + i);
+      return m.toISOString().slice(0, 7);
+    });
+
+    // Forecast salaries month-by-month
     const forecastedSalaries = forecastMonthsArr.map((month) => {
       const employees = Object.values(latestSalaryMap).filter((e) => {
-        if (!e.date_of_joining) return true;
-
+        if (!e.date_of_joining) return false;
         const joinMonth = e.date_of_joining.slice(0, 7);
-        // Only include employees who have joined by that month
         return joinMonth <= month;
       });
 
       const total_expected_salaries = employees.reduce(
-        (sum, emp) => sum + (emp.gross_salary || 0),
+        (sum, emp) => sum + (emp.net_takehome || 0),
         0
       );
 
-      return {
-        month,
-        total_expected_salaries,
-        employees,
-      };
+      return { month, total_expected_salaries, employees };
     });
 
-    console.log("🧾 Forecast Salary Details:", forecastedSalaries);
-
-    // Merge forecasted expenses + forecasted salaries
+    // Merge forecasted salaries + regular expenses
     const futureOutgoingMap = {};
+
+    // Add regular recurring expenses
     futureRegularExpenses.forEach((r) => {
       if (!r.month) return;
       futureOutgoingMap[r.month] = (futureOutgoingMap[r.month] || 0) + (r.expected_expense || 0);
     });
+
+    // Add forecasted salaries (skip already-paid months)
     forecastedSalaries.forEach((s) => {
       if (!s.month) return;
+      if (actualSalaryPaidMap[s.month]) return; // skip if already paid
       futureOutgoingMap[s.month] = (futureOutgoingMap[s.month] || 0) + (s.total_expected_salaries || 0);
     });
+
+    // Merge actual salaries into actualOutgoingMap
+    Object.entries(actualSalaryPaidMap).forEach(([month, total_paid]) => {
+      actualOutgoingMap[month] = (actualOutgoingMap[month] || 0) + total_paid;
+    });
+
+    const actualOutgoing = Object.entries(actualOutgoingMap).map(([month, amount]) => ({
+      month,
+      amount,
+    }));
 
     const futureExpenses = Object.entries(futureOutgoingMap).map(([month, expected_expense]) => ({
       month,
@@ -2745,10 +2692,15 @@ app.get("/forecast", async (req, res) => {
       futureIncome,
       pastExpenses: actualOutgoing,
       futureExpenses,
-      forecastedSalaries, // detailed list of employees per forecast month
+      forecastedSalaries,
     });
 
-    console.log("✅ Forecast Data Prepared for", { monthsBack, monthsAhead });
+    console.log("✅ Forecast Data Prepared Successfully", {
+      pastIncomeCount: pastIncome.length,
+      actualOutgoingCount: actualOutgoing.length,
+      futureIncomeCount: futureIncome.length,
+      futureExpensesCount: futureExpenses.length,
+    });
   } catch (err) {
     console.error("❌ Forecast API Error:", err);
     res.status(500).json({
@@ -2761,6 +2713,8 @@ app.get("/forecast", async (req, res) => {
     });
   }
 });
+
+
 
 
 
