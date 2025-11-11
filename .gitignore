@@ -1,2 +1,12 @@
 Accounting.db-wal
 Accounting.db*
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Node modules
+node_modules/
+
+# Environment files
+.env
