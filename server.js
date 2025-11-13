@@ -187,9 +187,11 @@ db.run(`
     paid_amount REAL DEFAULT 0,
     actual_to_pay REAL DEFAULT 0,
     paid_date TEXT,
+    due_date TEXT,
     FOREIGN KEY(employee_id) REFERENCES salary_payments(employee_id) ON UPDATE CASCADE ON DELETE CASCADE
   );
 `);
+
 
 // Expenses DB
 db.run(`
@@ -1774,200 +1776,67 @@ app.put("/updateinvoices/:id", (req, res) => {
 //       }
 
 //       const salaryId = this.lastID;
-app.post("/monthlySalary/save", (req, res) => {
-  const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
 
-  if (!empId || !empName || !month) {
-    return res.status(400).json({ success: false, message: "Missing required fields" });
+app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
+  const { employeeId, month } = req.params;
+  const { paid, lop, paidAmount, actualToPay } = req.body;
+
+  if (!paid || !month) {
+    return res.status(400).json({
+      success: false,
+      message: "Paid status and month are required",
+    });
   }
 
-  // 1️⃣ Save salary record
+  const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
+
+  const query = `
+    UPDATE monthly_salary_payments
+    SET 
+      paid = ?, 
+      lop = ?, 
+      paid_amount = ?, 
+      actual_to_pay = ?, 
+      paid_date = ?
+    WHERE employee_id = ? AND month = ?
+  `;
+
   db.run(
-    `
-    INSERT INTO monthly_salary_payments 
-    (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    `,
-    [empId, empName, paid, month, lop, paidAmount, actualToPay],
+    query,
+    [
+      paid,
+      lop || 0,
+      paidAmount || 0,
+      actualToPay || 0,
+      paidDate,
+      employeeId,
+      month,
+    ],
     function (err) {
       if (err) {
-        console.error("Error saving salary:", err);
-        return res.status(500).json({ success: false, message: "Database error" });
-      }
-
-      const salaryId = this.lastID;
-
-      // ✅ Proceed only if paid = "Yes"
-      if (paid === "Yes" && paidAmount > 0) {
-        db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
-          if (err || !currentAcc) {
-            console.error("Error finding current account:", err);
-            return res.status(500).json({ success: false, message: "Current account not found" });
-          }
-
-          const currentBalance = currentAcc.balance;
-
-          // ✅ If Current Account has enough balance
-          if (currentBalance >= paidAmount) {
-            const newBalance = currentBalance - paidAmount;
-
-            // 💳 Deduct from Current Account
-            db.run(
-              `UPDATE accounts SET balance = ? WHERE account_id = ?`,
-              [newBalance, currentAcc.account_id],
-              (err) => {
-                if (err) {
-                  console.error("Error updating current account:", err);
-                  return res.status(500).json({ success: false, message: "Balance update failed" });
-                }
-
-                // 💾 Generate transaction details
-                const transactionId = `DEB/SAL/${empId}/${month}`;
-                const description = `Salary for Employee ${empId} for the month of ${month}`;
-                const previousBalance = currentBalance;
-                const updatedBalance = newBalance;
-
-                // 💾 Record transaction with balance tracking
-                db.run(
-                  `
-                  INSERT INTO transactions 
-                  (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
-                  VALUES (?, ?, ?, ?, ?, ?, ?)
-                  `,
-                  [
-                    transactionId,
-                    currentAcc.account_number,
-                    "Debit",
-                    description,
-                    paidAmount,
-                    previousBalance,
-                    updatedBalance,
-                  ],
-                  (err) => {
-                    if (err) {
-                      console.error("Error inserting transaction:", err);
-                      return res.status(500).json({ success: false, message: "Transaction failed" });
-                    }
-
-                    return res.json({
-                      success: true,
-                      message: "Salary paid and transaction recorded successfully",
-                      transaction: {
-                        transaction_id: transactionId,
-                        type: "Debit",
-                        amount: paidAmount,
-                        description,
-                        previous_balance: previousBalance,
-                        updated_balance: updatedBalance,
-                        account_number: currentAcc.account_number,
-                      },
-                    });
-                  }
-                );
-              }
-            );
-          } else {
-            // ⚠️ If insufficient, transfer from Capital
-            const needed = paidAmount - currentBalance;
-
-            db.get(`SELECT * FROM accounts WHERE account_type = 'Capital'`, (err, capitalAcc) => {
-              if (err || !capitalAcc) {
-                console.error("Capital account missing:", err);
-                return res.status(500).json({ success: false, message: "Capital account not found" });
-              }
-
-              if (capitalAcc.balance < needed) {
-                return res.status(400).json({
-                  success: false,
-                  message: "Insufficient funds in both accounts",
-                });
-              }
-
-              const capitalPrevBalance = capitalAcc.balance;
-              const capitalNewBalance = capitalPrevBalance - needed;
-              const currentPrevBalance = currentAcc.balance;
-              const currentNewBalance = currentPrevBalance + needed - paidAmount;
-
-              // 🔁 Update both balances
-              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [capitalNewBalance, capitalAcc.account_id]);
-              db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [currentNewBalance, currentAcc.account_id]);
-
-              // 💾 Log transfer transaction (Capital → Current)
-              const transferId = `TRF/SAL/${empId}/${month}`;
-              const transferDesc = `Transfer ₹${needed} from Capital → Current for salary payment`;
-
-              db.run(
-                `
-                INSERT INTO transactions 
-                (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                `,
-                [
-                  transferId,
-                  capitalAcc.account_number,
-                  "Transfer",
-                  transferDesc,
-                  needed,
-                  capitalPrevBalance,
-                  capitalNewBalance,
-                ]
-              );
-
-              // 💾 Log salary debit from Current Account
-              const salaryTransactionId = `DEB/SAL/${empId}/${month}`;
-              const salaryDesc = `Salary for Employee ${empId} for the month of ${month}`;
-
-              db.run(
-                `
-                INSERT INTO transactions 
-                (transaction_id, account_number, type, description, amount, previous_balance, updated_balance)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                `,
-                [
-                  salaryTransactionId,
-                  currentAcc.account_number,
-                  "Debit",
-                  salaryDesc,
-                  paidAmount,
-                  currentPrevBalance + needed,
-                  currentNewBalance,
-                ]
-              );
-
-              return res.json({
-                success: true,
-                message: `Salary paid successfully after transferring ₹${needed} from Capital to Current.`,
-                transactions: [
-                  {
-                    transaction_id: transferId,
-                    type: "Transfer",
-                    amount: needed,
-                    description: transferDesc,
-                    previous_balance: capitalPrevBalance,
-                    updated_balance: capitalNewBalance,
-                    account_number: capitalAcc.account_number,
-                  },
-                  {
-                    transaction_id: salaryTransactionId,
-                    type: "Debit",
-                    amount: paidAmount,
-                    description: salaryDesc,
-                    previous_balance: currentPrevBalance + needed,
-                    updated_balance: currentNewBalance,
-                    account_number: currentAcc.account_number,
-                  },
-                ],
-              });
-            });
-          }
+        console.error("❌ Error updating salary:", err);
+        return res.status(500).json({
+          success: false,
+          message: "Database update failed",
         });
-      } else {
-        // Not paid yet
-        return res.json({ success: true, message: "Salary saved (not paid yet)" });
       }
+
+      if (this.changes === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "No salary record found for this employee and month",
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: "Salary updated successfully",
+      });
     }
   );
 });
+
+
 
 
 // ✅ Pay Expense and Record Transaction
@@ -2260,6 +2129,9 @@ app.get("/api/pending-salaries", (req, res) => {
       employee_id,
 
       employee_name,
+      paid,
+      actual_to_pay,
+      
 
       COUNT(month) AS pending_months_count,
 
@@ -3673,17 +3545,6 @@ app.get("/forecast/details", async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
-
-
-
-
 // -----------------------------------------------------------------------------
 // 📈 MONTHLY SUMMARY ENDPOINT (aligned with /forecast)
 // -----------------------------------------------------------------------------
@@ -3803,24 +3664,95 @@ app.get("/monthly-summary", async (req, res) => {
   }
 });
 
+
+
 // -----------------------------------------------------------------------------
-// 🔥 Linear Regression Helper
+// 💰 UPDATE / ADD MONTHLY SALARY RECORD
 // -----------------------------------------------------------------------------
-function linearRegressionForecast(values, predictMonths = 3) {
-  const n = values.length;
-  if (n === 0) return Array(predictMonths).fill(0);
-  let sumX = 0, sumY = 0, sumXX = 0, sumXY = 0;
-  for (let i = 0; i < n; i++) {
-    const x = i, y = values[i] || 0;
-    sumX += x; sumY += y; sumXX += x * x; sumXY += x * y;
+app.put("/update-salary/:employee_id", (req, res) => {
+  const { employee_id } = req.params;
+  const { month, actual_to_pay, due_date } = req.body;
+
+  // ✅ Input validation
+  if (!employee_id || !month || !actual_to_pay || !due_date) {
+    return res.status(400).json({
+      error: "Employee ID, month, actual_to_pay, and due_date are required.",
+    });
   }
-  const denom = n * sumXX - sumX * sumX;
-  let slope = 0, intercept = sumY / n;
-  if (denom !== 0) slope = (n * sumXY - sumX * sumY) / denom;
-  return Array.from({ length: predictMonths }, (_, k) =>
-    Number(Math.max(0, intercept + slope * (n + k)).toFixed(2))
-  );
-}
+
+  // Ensure month format is YYYY-MM
+  const formattedMonth = month.slice(0, 7);
+
+  // Step 1️⃣: Check if record exists
+  const checkQuery = `
+    SELECT * FROM monthly_salary_payments
+    WHERE employee_id = ? AND month = ?
+  `;
+
+  db.get(checkQuery, [employee_id, formattedMonth], (err, record) => {
+    if (err) {
+      console.error("❌ Error checking salary record:", err);
+      return res.status(500).json({ error: "Database check failed." });
+    }
+
+    if (record) {
+      // Step 2️⃣: Update existing record
+      const updateQuery = `
+        UPDATE monthly_salary_payments
+        SET 
+          actual_to_pay = ?, 
+          due_date = ?, 
+          paid = 'No',
+          paid_amount = 0
+        WHERE employee_id = ? AND month = ?
+      `;
+
+      db.run(updateQuery, [actual_to_pay, due_date, employee_id, formattedMonth], function (err) {
+        if (err) {
+          console.error("❌ Error updating salary:", err);
+          return res.status(500).json({ error: "Failed to update salary record." });
+        }
+
+        console.log(`✅ Salary updated for ${employee_id} (${formattedMonth})`);
+        res.json({
+          success: true,
+          message: "Salary record updated successfully.",
+          data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+        });
+      });
+    } else {
+      // Step 3️⃣: Insert new record
+      const getEmployeeQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+      db.get(getEmployeeQuery, [employee_id], (err, emp) => {
+        if (err || !emp) {
+          console.error("❌ Error fetching employee name:", err);
+          return res.status(404).json({ error: "Employee not found in salary_payments table." });
+        }
+
+        const insertQuery = `
+          INSERT INTO monthly_salary_payments 
+          (employee_id, employee_name, month, actual_to_pay, due_date, paid, paid_amount)
+          VALUES (?, ?, ?, ?, ?, 'No', 0)
+        `;
+
+        db.run(insertQuery, [employee_id, emp.employee_name, formattedMonth, actual_to_pay, due_date], function (err) {
+          if (err) {
+            console.error("❌ Error inserting new salary:", err);
+            return res.status(500).json({ error: "Failed to insert salary record." });
+          }
+
+          console.log(`✅ New salary record created for ${employee_id} (${formattedMonth})`);
+          res.json({
+            success: true,
+            message: "Salary record created successfully.",
+            data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+          });
+        });
+      });
+    }
+  });
+});
+
 
 function currentMonth() {
   return new Date().toISOString().slice(0, 7);
