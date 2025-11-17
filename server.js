@@ -2296,9 +2296,6 @@ app.get("/transactionsOfBankAccounts", (req, res) => {
   );
 });
 
-
-
-
 // 🔹 Create Account
 app.post("/accounts", (req, res) => {
   const { account_number, account_name, account_type, balance } = req.body;
@@ -3104,11 +3101,8 @@ app.get("/forecast", async (req, res) => {
         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
       });
 
-<<<<<<< HEAD
-    // // Build YYYY-MM month keys
-=======
     // Build YYYY-MM month keys
->>>>>>> a745471548ab91b653461083ba7ca81dadb7418b
+
     // const monthKeys = [];
     // for (let i = -monthsBack; i <= monthsAhead; i++) {
     //   const d = new Date(today);
@@ -3117,34 +3111,24 @@ app.get("/forecast", async (req, res) => {
     // }
     // const startMonthDate = monthKeys[0] + "-01";
     // const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
-<<<<<<< HEAD
+
     // === Auto Month Range (1 year back → 2 years ahead) ===
 const startYear = today.getFullYear() - 1;   // 1 year back
 const endYear   = today.getFullYear() + 2;   // 2 years ahead automatically
 
-=======
 
-    const startYear = today.getFullYear() - 1;   // 1 year back
-const endYear   = today.getFullYear() + 2;   // 2 years ahead automatically
- 
->>>>>>> a745471548ab91b653461083ba7ca81dadb7418b
+
+
+
 // Generate full month list
 const monthKeys = generateMonthRange(
   `${startYear}-01`,
   `${endYear}-12`
 );
-<<<<<<< HEAD
-
-// Start + End dates for SQL
-const startMonthDate = monthKeys[0] + "-01";
-const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
-
-=======
  
 // Start + End dates for SQL
 const startMonthDate = monthKeys[0] + "-01";
 const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
->>>>>>> a745471548ab91b653461083ba7ca81dadb7418b
 
     // --------------------------------------------------------------------
     // RAW DATA QUERIES (Salary Removed)
