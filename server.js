@@ -3525,8 +3525,10 @@ const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
       );
 
       // --- Net Cash ---
+      // const monthlyBalance =
+      //   actualIncomeTotal + forecastIncomeTotal - actualExpenseTotal - forecastExpenseTotal;
       const monthlyBalance =
-        actualIncomeTotal + forecastIncomeTotal - actualExpenseTotal - forecastExpenseTotal;
+       forecastIncomeTotal - forecastExpenseTotal;
 
       // --- Expense Breakdown ---
       const expenseBreakdown = {};
@@ -3589,6 +3591,15 @@ const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
 });
 
 app.get("/monthly-last-balances", (req, res) => {
+  const { month } = req.query; // YYYY-MM
+
+  if (!month) {
+    return res.status(400).json({
+      success: false,
+      message: "month is required (YYYY-MM)"
+    });
+  }
+
   const sql = `
     SELECT 
       strftime('%Y-%m', t.created_at) AS month,
@@ -3596,19 +3607,21 @@ app.get("/monthly-last-balances", (req, res) => {
     FROM transactions t
     JOIN accounts a ON t.account_number = a.account_number
     WHERE a.account_type = 'Current'
-    GROUP BY strftime('%Y-%m', t.created_at)
-    ORDER BY month ASC;
+      AND strftime('%Y-%m', t.created_at) = ?
+    ORDER BY t.created_at DESC
+    LIMIT 1;
   `;
 
-  req.app.locals.db.all(sql, [], (err, rows) => {
+  req.app.locals.db.get(sql, [month], (err, row) => {
     if (err) return res.status(500).json({ success: false, error: err.message });
 
     res.json({
       success: true,
-      data: rows,
+      data: row ? [row] : []
     });
   });
 });
+
 
 
 
