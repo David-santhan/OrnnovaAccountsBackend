@@ -269,7 +269,18 @@ db.run(`
 // dropTableWithRetry(db);
 
 
-
+function generateMonthRange(start, end) {
+  const startDate = new Date(start + "-01");
+  const endDate = new Date(end + "-01");
+  const months = [];
+ 
+  while (startDate <= endDate) {
+    months.push(startDate.toISOString().slice(0, 7));
+    startDate.setMonth(startDate.getMonth() + 1);
+  }
+ 
+  return months;
+}
 
 
 function runQuery(query) {
@@ -1712,6 +1723,13 @@ app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
         });
       }
 
+      // ============================================================
+      // 🔥 CALL FUNCTION TO ALSO UPDATE expense_payments
+      // ============================================================
+      if (paid === "Yes") {
+        updateExpensePaymentOnSalaryPaid(employeeId, month, paidAmount, paidDate);
+      }
+
       return res.json({
         success: true,
         message: "Salary updated successfully",
@@ -1719,6 +1737,64 @@ app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
     }
   );
 });
+
+
+// ==============================================================
+// ⭐ Helper Function to update expense_payments based on salary
+// ==============================================================
+function updateExpensePaymentOnSalaryPaid(employeeId, month_year, paidAmount, paidDate) {
+  console.log("🔄 Updating expense_payments for salary payment...");
+
+  // 1️⃣ Get employee name
+  const empQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+
+  db.get(empQuery, [employeeId], (err, emp) => {
+    if (err || !emp) {
+      return console.error("❌ Employee not found in salary_payments.");
+    }
+
+    // Build type string
+    const typeString = `Salary - ${emp.employee_name} (${employeeId})`;
+
+    // 2️⃣ Get expense_id from expenses table
+    const expQuery = `SELECT auto_id FROM expenses WHERE type = ?`;
+
+    db.get(expQuery, [typeString], (err, expense) => {
+      if (err || !expense) {
+        return console.error("❌ No expense entry found for:", typeString);
+      }
+
+      const expenseId = expense.auto_id;
+
+      // 3️⃣ Update expense_payments entry
+      const updateExpensePayment = `
+        UPDATE expense_payments
+        SET 
+          paid_amount = ?, 
+          paid_date = ?, 
+          status = 'Paid'
+        WHERE expense_id = ? AND month_year = ?
+      `;
+
+      db.run(
+        updateExpensePayment,
+        [paidAmount, paidDate, expenseId, month_year],
+        function (err) {
+          if (err) {
+            return console.error("❌ Error updating expense_payments:", err);
+          }
+
+          if (this.changes === 0) {
+            console.log("⚠️ No existing expense_payments found. Ignoring.");
+          } else {
+            console.log("✅ expense_payments updated successfully.");
+          }
+        }
+      );
+    });
+  });
+}
+
 
 
 
@@ -2924,7 +3000,7 @@ function monthKey(dateStr) {
 //       const forecastExpenseTotal = forecastExpenseItems.reduce((s, it) => s + Number(it.amount || 0), 0);
 
 //       // ---------- Net Cash Flow ----------
-//       const netCashFlow =
+//       const monthlyBalance =
 //         (actualIncomeTotal || 0) +
 //         (forecastIncomeTotal || 0) -
 //         (actualExpenseTotal || 0) -
@@ -2965,7 +3041,7 @@ function monthKey(dateStr) {
 //         actualExpenseItems,
 //         forecastExpenseTotal,
 //         forecastExpenseItems,
-//         netCashFlow,
+//         monthlyBalance,
 //         incomeBreakdown,
 //         expenseBreakdown,
 //       });
@@ -3005,8 +3081,8 @@ app.get("/forecast", async (req, res) => {
     const db = req.app.locals.db;
     if (!db) throw new Error("Database not initialized");
 
-    const monthsBack = parseInt(req.query.monthsBack, 10) || 12;
-    const monthsAhead = parseInt(req.query.monthsAhead, 10) || 6;
+    // const monthsBack = parseInt(req.query.monthsBack, 10) || 12;
+    // const monthsAhead = parseInt(req.query.monthsAhead, 10) || 6;
 
     const today = new Date();
 
@@ -3016,14 +3092,27 @@ app.get("/forecast", async (req, res) => {
       });
 
     // Build YYYY-MM month keys
-    const monthKeys = [];
-    for (let i = -monthsBack; i <= monthsAhead; i++) {
-      const d = new Date(today);
-      d.setMonth(today.getMonth() + i);
-      monthKeys.push(d.toISOString().slice(0, 7));
-    }
-    const startMonthDate = monthKeys[0] + "-01";
-    const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
+    // const monthKeys = [];
+    // for (let i = -monthsBack; i <= monthsAhead; i++) {
+    //   const d = new Date(today);
+    //   d.setMonth(today.getMonth() + i);
+    //   monthKeys.push(d.toISOString().slice(0, 7));
+    // }
+    // const startMonthDate = monthKeys[0] + "-01";
+    // const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
+
+    const startYear = today.getFullYear() - 1;   // 1 year back
+const endYear   = today.getFullYear() + 2;   // 2 years ahead automatically
+ 
+// Generate full month list
+const monthKeys = generateMonthRange(
+  `${startYear}-01`,
+  `${endYear}-12`
+);
+ 
+// Start + End dates for SQL
+const startMonthDate = monthKeys[0] + "-01";
+const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
 
     // --------------------------------------------------------------------
     // RAW DATA QUERIES (Salary Removed)
@@ -3265,7 +3354,7 @@ app.get("/forecast", async (req, res) => {
       );
 
       // --- Net Cash ---
-      const netCashFlow =
+      const monthlyBalance =
         actualIncomeTotal + forecastIncomeTotal - actualExpenseTotal - forecastExpenseTotal;
 
       // --- Expense Breakdown ---
@@ -3297,7 +3386,7 @@ app.get("/forecast", async (req, res) => {
         actualExpenseItems,
         forecastExpenseTotal,
         forecastExpenseItems,
-        netCashFlow,
+        monthlyBalance,
         incomeBreakdown,
         expenseBreakdown,
       });
@@ -3482,7 +3571,7 @@ app.get("/forecast/details", async (req, res) => {
     // 🧮 7️⃣ Net Cash Flow (forecast projection only)
     const inflows = forecastedIncomeTotal;
     const outflows = forecastedExpensesTotal + forecastedSalariesTotal;
-    const netCashFlow = currentAccountBalance + inflows - outflows;
+    const monthlyBalance = currentAccountBalance + inflows - outflows;
 
     // ✅ Response
     res.json({
@@ -3494,7 +3583,7 @@ app.get("/forecast/details", async (req, res) => {
         forecastedSalariesTotal,
         inflows,
         outflows,
-        netCashFlow,
+        monthlyBalance,
       },
       details: {
         actualIncome,
@@ -3506,7 +3595,7 @@ app.get("/forecast/details", async (req, res) => {
     });
 
     console.log(
-      `✅ Forecast-only Cash Flow for ${date}: ₹${netCashFlow.toLocaleString()}`
+      `✅ Forecast-only Cash Flow for ${date}: ₹${monthlyBalance.toLocaleString()}`
     );
   } catch (err) {
     console.error("❌ Forecast Details API Fatal Error:", err.message);
@@ -3638,21 +3727,102 @@ app.get("/monthly-summary", async (req, res) => {
 // -----------------------------------------------------------------------------
 // 💰 UPDATE / ADD MONTHLY SALARY RECORD
 // -----------------------------------------------------------------------------
+// app.put("/update-salary/:employee_id", (req, res) => {
+//   const { employee_id } = req.params;
+//   const { month, actual_to_pay, due_date } = req.body;
+
+//   // ✅ Input validation
+//   if (!employee_id || !month || !actual_to_pay || !due_date) {
+//     return res.status(400).json({
+//       error: "Employee ID, month, actual_to_pay, and due_date are required.",
+//     });
+//   }
+
+//   // Ensure month format is YYYY-MM
+//   const formattedMonth = month.slice(0, 7);
+
+//   // Step 1️⃣: Check if record exists
+//   const checkQuery = `
+//     SELECT * FROM monthly_salary_payments
+//     WHERE employee_id = ? AND month = ?
+//   `;
+
+//   db.get(checkQuery, [employee_id, formattedMonth], (err, record) => {
+//     if (err) {
+//       console.error("❌ Error checking salary record:", err);
+//       return res.status(500).json({ error: "Database check failed." });
+//     }
+
+//     if (record) {
+//       // Step 2️⃣: Update existing record
+//       const updateQuery = `
+//         UPDATE monthly_salary_payments
+//         SET 
+//           actual_to_pay = ?, 
+//           due_date = ?, 
+//           paid = 'No',
+//           paid_amount = 0
+//         WHERE employee_id = ? AND month = ?
+//       `;
+
+//       db.run(updateQuery, [actual_to_pay, due_date, employee_id, formattedMonth], function (err) {
+//         if (err) {
+//           console.error("❌ Error updating salary:", err);
+//           return res.status(500).json({ error: "Failed to update salary record." });
+//         }
+
+//         console.log(`✅ Salary updated for ${employee_id} (${formattedMonth})`);
+//         res.json({
+//           success: true,
+//           message: "Salary record updated successfully.",
+//           data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+//         });
+//       });
+//     } else {
+//       // Step 3️⃣: Insert new record
+//       const getEmployeeQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+//       db.get(getEmployeeQuery, [employee_id], (err, emp) => {
+//         if (err || !emp) {
+//           console.error("❌ Error fetching employee name:", err);
+//           return res.status(404).json({ error: "Employee not found in salary_payments table." });
+//         }
+
+//         const insertQuery = `
+//           INSERT INTO monthly_salary_payments 
+//           (employee_id, employee_name, month, actual_to_pay, due_date, paid, paid_amount)
+//           VALUES (?, ?, ?, ?, ?, 'No', 0)
+//         `;
+
+//         db.run(insertQuery, [employee_id, emp.employee_name, formattedMonth, actual_to_pay, due_date], function (err) {
+//           if (err) {
+//             console.error("❌ Error inserting new salary:", err);
+//             return res.status(500).json({ error: "Failed to insert salary record." });
+//           }
+
+//           console.log(`✅ New salary record created for ${employee_id} (${formattedMonth})`);
+//           res.json({
+//             success: true,
+//             message: "Salary record created successfully.",
+//             data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+//           });
+//         });
+//       });
+//     }
+//   });
+// });
+
 app.put("/update-salary/:employee_id", (req, res) => {
   const { employee_id } = req.params;
   const { month, actual_to_pay, due_date } = req.body;
 
-  // ✅ Input validation
   if (!employee_id || !month || !actual_to_pay || !due_date) {
     return res.status(400).json({
       error: "Employee ID, month, actual_to_pay, and due_date are required.",
     });
   }
 
-  // Ensure month format is YYYY-MM
   const formattedMonth = month.slice(0, 7);
 
-  // Step 1️⃣: Check if record exists
   const checkQuery = `
     SELECT * FROM monthly_salary_payments
     WHERE employee_id = ? AND month = ?
@@ -3665,14 +3835,12 @@ app.put("/update-salary/:employee_id", (req, res) => {
     }
 
     if (record) {
-      // Step 2️⃣: Update existing record
+      // --------------------------------------------------------------------
+      // 🔥 Step 1: UPDATE existing monthly_salary_payments
+      // --------------------------------------------------------------------
       const updateQuery = `
         UPDATE monthly_salary_payments
-        SET 
-          actual_to_pay = ?, 
-          due_date = ?, 
-          paid = 'No',
-          paid_amount = 0
+        SET actual_to_pay = ?, due_date = ?, paid = 'No', paid_amount = 0
         WHERE employee_id = ? AND month = ?
       `;
 
@@ -3682,16 +3850,20 @@ app.put("/update-salary/:employee_id", (req, res) => {
           return res.status(500).json({ error: "Failed to update salary record." });
         }
 
-        console.log(`✅ Salary updated for ${employee_id} (${formattedMonth})`);
+        // Continue to update expenses_payment
+        handleExpensePaymentUpdate(employee_id, formattedMonth, actual_to_pay, due_date);
         res.json({
           success: true,
-          message: "Salary record updated successfully.",
-          data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+          message: "Salary updated & expense payment updated.",
         });
       });
+
     } else {
-      // Step 3️⃣: Insert new record
+      // --------------------------------------------------------------------
+      // 🔥 Step 2: INSERT new monthly_salary_payments
+      // --------------------------------------------------------------------
       const getEmployeeQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+
       db.get(getEmployeeQuery, [employee_id], (err, emp) => {
         if (err || !emp) {
           console.error("❌ Error fetching employee name:", err);
@@ -3699,7 +3871,7 @@ app.put("/update-salary/:employee_id", (req, res) => {
         }
 
         const insertQuery = `
-          INSERT INTO monthly_salary_payments 
+          INSERT INTO monthly_salary_payments
           (employee_id, employee_name, month, actual_to_pay, due_date, paid, paid_amount)
           VALUES (?, ?, ?, ?, ?, 'No', 0)
         `;
@@ -3710,17 +3882,87 @@ app.put("/update-salary/:employee_id", (req, res) => {
             return res.status(500).json({ error: "Failed to insert salary record." });
           }
 
-          console.log(`✅ New salary record created for ${employee_id} (${formattedMonth})`);
+          // Continue to update expenses_payment
+          handleExpensePaymentUpdate(employee_id, formattedMonth, actual_to_pay, due_date);
+
           res.json({
             success: true,
-            message: "Salary record created successfully.",
-            data: { employee_id, month: formattedMonth, actual_to_pay, due_date, paid: "No" },
+            message: "Salary created & expense payment inserted.",
           });
         });
       });
     }
   });
 });
+
+
+// ======================================================================
+// ⭐ FUNCTION TO INSERT OR UPDATE expense_payments
+// ======================================================================
+function handleExpensePaymentUpdate(employee_id, month_year, actual_to_pay, due_date) {
+  // Fetch employee name to match expenses.type
+  const empQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+
+  db.get(empQuery, [employee_id], (err, emp) => {
+    if (err || !emp) {
+      return console.error("❌ Employee not found for expense mapping.");
+    }
+
+    const typePattern = `Salary - ${emp.employee_name} (${employee_id})`;
+
+    // 1️⃣ Find matching expense entry
+    const findExpenseQuery = `
+      SELECT auto_id FROM expenses
+      WHERE type = ?
+    `;
+
+    db.get(findExpenseQuery, [typePattern], (err, expense) => {
+      if (err || !expense) {
+        return console.error("❌ Matching expense not found for:", typePattern);
+      }
+
+      const expense_id = expense.auto_id;
+
+      // 2️⃣ Check if expense_payments entry exists
+      const checkExpensePayQuery = `
+        SELECT * FROM expense_payments
+        WHERE expense_id = ? AND month_year = ?
+      `;
+
+      db.get(checkExpensePayQuery, [expense_id, month_year], (err, rec) => {
+        if (err) {
+          return console.error("❌ Error checking expense_payments:", err);
+        }
+
+        if (rec) {
+          // 3️⃣ UPDATE existing expense_payment
+          const updateExpensePay = `
+            UPDATE expense_payments
+            SET actual_amount = ?, due_date = ?, status = 'Raised'
+            WHERE expense_id = ? AND month_year = ?
+          `;
+
+          db.run(updateExpensePay, [actual_to_pay, due_date, expense_id, month_year], (err) => {
+            if (err) console.error("❌ Error updating expense_payments:", err);
+          });
+
+        } else {
+          // 4️⃣ INSERT new expense_payment
+          const insertExpensePay = `
+            INSERT INTO expense_payments 
+            (expense_id, month_year, actual_amount, paid_amount, paid_date, status, remarks, due_date)
+            VALUES (?, ?, ?, NULL, NULL, 'Raised', NULL, ?)
+          `;
+
+          db.run(insertExpensePay, [expense_id, month_year, actual_to_pay, due_date], (err) => {
+            if (err) console.error("❌ Error inserting expense_payments:", err);
+          });
+        }
+      });
+    });
+  });
+}
+
 // -----------------------------------------------------------------------------
 // 💰 ADD MONTHLY Expense RECORD
 // -----------------------------------------------------------------------------
