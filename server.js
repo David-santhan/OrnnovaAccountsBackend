@@ -1801,6 +1801,107 @@ function updateExpensePaymentOnSalaryPaid(employeeId, month_year, paidAmount, pa
 
 // ✅ Pay Expense and Record Transaction
 // ✅ Pay Expense and Record Transaction (with account deduction)
+// app.put("/pay-expense", (req, res) => {
+//   const { expense_id, paid_amount, paid_date } = req.body;
+
+//   if (!expense_id || !paid_amount || !paid_date) {
+//     return res.status(400).json({ success: false, message: "Missing fields" });
+//   }
+
+//   const amount = parseFloat(paid_amount);
+
+//   // ✔ Use YYYY-MM format
+//   const paidMonthYear = paid_date.slice(0, 7); // "2025-11"
+
+//   // Generate 4-digit time code (HHMM)
+//   const now = new Date();
+//   const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
+//     .getMinutes()
+//     .toString()
+//     .padStart(2, "0")}`;
+
+//   // 1️⃣ Get Expense details
+//   db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
+//     if (err) return res.status(500).json({ success: false, message: err.message });
+//     if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
+
+//     const expenseType = expense.type || expense.description || "General";
+//     const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
+//     const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
+//     const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
+
+//     // 2️⃣ Get Current Account
+//     db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
+//       if (err || !currentAcc) {
+//         return res.status(500).json({ success: false, message: "Current account not found" });
+//       }
+
+//       if (currentAcc.balance < amount) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Insufficient funds. Current balance: ₹${currentAcc.balance} — required: ₹${amount}`,
+//         });
+//       }
+
+//       const prevBalance = currentAcc.balance;
+//       const newBalance = prevBalance - amount;
+
+//       db.serialize(() => {
+//         // 💰 Update Current Account
+//         db.run(
+//           `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+//           [newBalance, currentAcc.account_id]
+//         );
+
+//         // 📒 Record debit transaction
+//         db.run(
+//           `
+//           INSERT INTO transactions 
+//             (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+//           VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))
+//           `,
+//           [
+//             transactionId,
+//             currentAcc.account_number,
+//             amount,
+//             description,
+//             prevBalance,
+//             newBalance
+//           ]
+//         );
+
+//         // 🧾 Insert OR update expense payment for that month
+//         db.run(
+//           `
+//           INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+//           VALUES (?, ?, ?, ?, ?, 'Paid')
+//           ON CONFLICT(expense_id, month_year)
+//           DO UPDATE SET 
+//             paid_amount = excluded.paid_amount,
+//             paid_date = excluded.paid_date,
+//             status = 'Paid';
+//           `,
+//           [
+//             expense_id,
+//             paidMonthYear,
+//             expense.amount, // actual amount
+//             amount,
+//             paid_date
+//           ]
+//         );
+
+//         return res.json({
+//           success: true,
+//           message: `Expense paid successfully.`,
+//           transaction_id: transactionId,
+//           previous_balance: prevBalance,
+//           updated_balance: newBalance,
+//         });
+//       });
+//     });
+//   });
+// });
+
 app.put("/pay-expense", (req, res) => {
   const { expense_id, paid_amount, paid_date } = req.body;
 
@@ -1809,11 +1910,8 @@ app.put("/pay-expense", (req, res) => {
   }
 
   const amount = parseFloat(paid_amount);
+  const paidMonthYear = paid_date.slice(0, 7);
 
-  // ✔ Use YYYY-MM format
-  const paidMonthYear = paid_date.slice(0, 7); // "2025-11"
-
-  // Generate 4-digit time code (HHMM)
   const now = new Date();
   const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
     .getMinutes()
@@ -1821,86 +1919,159 @@ app.put("/pay-expense", (req, res) => {
     .padStart(2, "0")}`;
 
   // 1️⃣ Get Expense details
-  db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
-    if (err) return res.status(500).json({ success: false, message: err.message });
-    if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
+  db.get(
+    `SELECT * FROM expenses WHERE auto_id = ?`,
+    [expense_id],
+    (err, expense) => {
+      if (err) return res.status(500).json({ success: false, message: err.message });
+      if (!expense)
+        return res.status(404).json({ success: false, message: "Expense not found" });
 
-    const expenseType = expense.type || expense.description || "General";
-    const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
-    const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
-    const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
+      const expenseType = expense.type || expense.description || "General";
+      const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
+      const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
+      const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
 
-    // 2️⃣ Get Current Account
-    db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
-      if (err || !currentAcc) {
-        return res.status(500).json({ success: false, message: "Current account not found" });
-      }
+      // 2️⃣ Get current account
+      db.get(
+        `SELECT * FROM accounts WHERE account_type = 'Current'`,
+        (err, currentAcc) => {
+          if (err || !currentAcc)
+            return res
+              .status(500)
+              .json({ success: false, message: "Current account not found" });
 
-      if (currentAcc.balance < amount) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient funds. Current balance: ₹${currentAcc.balance} — required: ₹${amount}`,
-        });
-      }
+          if (currentAcc.balance < amount) {
+            return res.status(400).json({
+              success: false,
+              message: `Insufficient funds. Current balance: ₹${currentAcc.balance} — required: ₹${amount}`,
+            });
+          }
 
-      const prevBalance = currentAcc.balance;
-      const newBalance = prevBalance - amount;
+          const prevBalance = currentAcc.balance;
+          const newBalance = prevBalance - amount;
 
-      db.serialize(() => {
-        // 💰 Update Current Account
-        db.run(
-          `UPDATE accounts SET balance = ? WHERE account_id = ?`,
-          [newBalance, currentAcc.account_id]
-        );
+          db.serialize(() => {
+            // 💰 Update account balance
+            db.run(
+              `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+              [newBalance, currentAcc.account_id]
+            );
 
-        // 📒 Record debit transaction
-        db.run(
-          `
-          INSERT INTO transactions 
-            (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
-          VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))
-          `,
-          [
-            transactionId,
-            currentAcc.account_number,
-            amount,
-            description,
-            prevBalance,
-            newBalance
-          ]
-        );
+            // 📒 Insert debit transaction
+            db.run(
+              `
+              INSERT INTO transactions 
+                (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+              VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))
+            `,
+              [
+                transactionId,
+                currentAcc.account_number,
+                amount,
+                description,
+                prevBalance,
+                newBalance,
+              ]
+            );
 
-        // 🧾 Insert OR update expense payment for that month
-        db.run(
-          `
-          INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
-          VALUES (?, ?, ?, ?, ?, 'Paid')
-          ON CONFLICT(expense_id, month_year)
-          DO UPDATE SET 
-            paid_amount = excluded.paid_amount,
-            paid_date = excluded.paid_date,
-            status = 'Paid';
-          `,
-          [
-            expense_id,
-            paidMonthYear,
-            expense.amount, // actual amount
-            amount,
-            paid_date
-          ]
-        );
+            // 🧾 Insert/Update expense_payments
+            db.run(
+              `
+              INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+              VALUES (?, ?, ?, ?, ?, 'Paid')
+              ON CONFLICT(expense_id, month_year)
+              DO UPDATE SET 
+                paid_amount = excluded.paid_amount,
+                paid_date = excluded.paid_date,
+                status = 'Paid';
+            `,
+              [
+                expense_id,
+                paidMonthYear,
+                expense.amount,
+                amount,
+                paid_date,
+              ]
+            );
 
-        return res.json({
-          success: true,
-          message: `Expense paid successfully.`,
-          transaction_id: transactionId,
-          previous_balance: prevBalance,
-          updated_balance: newBalance,
-        });
-      });
-    });
-  });
+            // ⭐ NEW: UPDATE monthly salary if this expense represents a salary
+            updateSalaryOnExpensePaid(expenseType, paidMonthYear, amount, paid_date);
+
+            return res.json({
+              success: true,
+              message: `Expense paid successfully.`,
+              transaction_id: transactionId,
+              previous_balance: prevBalance,
+              updated_balance: newBalance,
+            });
+          });
+        }
+      );
+    }
+  );
 });
+
+function updateSalaryOnExpensePaid(expenseType, month_year, paidAmount, paidDate) {
+  console.log("🔄 Salary update triggered from expense...");
+
+  // 1️⃣ Check if it's salary expense
+  if (!/salary/i.test(expenseType)) {
+    console.log("⏭ Not a salary expense. Skipping.");
+    return;
+  }
+
+  // 2️⃣ Extract employee name and ID
+  let cleaned = expenseType.replace(/salary\s*[-:]?\s*/i, "").trim();
+  const employeeName = cleaned.replace(/\([^)]*\)/g, "").trim();
+
+  const idMatch = expenseType.match(/\(([^)]+)\)/);
+  if (!idMatch) {
+    console.log("❌ Could not extract employee ID");
+    return;
+  }
+
+  const employeeId = idMatch[1];
+
+  console.log("👤 Employee Name:", employeeName);
+  console.log("🆔 Employee ID:", employeeId);
+
+  // 3️⃣ Extract month (YYYY-MM)
+  const targetMonth = month_year.slice(0, 7);
+
+  // 4️⃣ Update the monthly salary payment
+  const salaryUpdateQuery = `
+    UPDATE monthly_salary_payments
+    SET 
+      paid = 'Yes',
+      paid_amount = ?, 
+      actual_to_pay = ?, 
+      paid_date = ?
+    WHERE employee_id = ?
+      AND substr(month, 1, 7) = ?
+  `;
+
+  db.run(
+    salaryUpdateQuery,
+    [paidAmount, paidAmount, paidDate, employeeId, targetMonth],
+    function (err) {
+      if (err) {
+        console.error("❌ Error updating monthly salary:", err);
+        return;
+      }
+
+      if (this.changes === 0) {
+        console.log(`⚠️ No matching salary record for ${employeeId} in ${targetMonth}`);
+      } else {
+        console.log("✅ Monthly salary updated to Paid ✔");
+      }
+    }
+  );
+}
+
+
+
+
 
 
 
@@ -3101,7 +3272,7 @@ app.get("/forecast", async (req, res) => {
     // const startMonthDate = monthKeys[0] + "-01";
     // const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
 
-    const startYear = today.getFullYear() - 1;   // 1 year back
+    const startYear = today.getFullYear() - 0;   // 0 year back
 const endYear   = today.getFullYear() + 2;   // 2 years ahead automatically
  
 // Generate full month list
@@ -3416,6 +3587,30 @@ const endMonthDate   = monthKeys[monthKeys.length - 1] + "-31";
     return res.status(500).json({ success: false, message: err.message, months: [] });
   }
 });
+
+app.get("/monthly-last-balances", (req, res) => {
+  const sql = `
+    SELECT 
+      strftime('%Y-%m', t.created_at) AS month,
+      t.updated_balance
+    FROM transactions t
+    JOIN accounts a ON t.account_number = a.account_number
+    WHERE a.account_type = 'Current'
+    GROUP BY strftime('%Y-%m', t.created_at)
+    ORDER BY month ASC;
+  `;
+
+  req.app.locals.db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+
+    res.json({
+      success: true,
+      data: rows,
+    });
+  });
+});
+
+
 
 
 
@@ -3969,12 +4164,22 @@ function handleExpensePaymentUpdate(employee_id, month_year, actual_to_pay, due_
 app.post("/saveExpensePayment", (req, res) => {
   const { expense_id, month_year, actual_amount, due_date } = req.body;
 
-  const status = "Raised"; // always Raised
-  
-  const sql = `
+  if (!expense_id || !month_year || !actual_amount || !due_date) {
+    return res.status(400).json({
+      error: "expense_id, month_year, actual_amount, due_date are required."
+    });
+  }
+
+  const status = "Raised";
+
+  // ==========================================================
+  // 1️⃣ UPSERT INTO expense_payments  (same as your old code)
+  // ==========================================================
+  const expenseSQL = `
     INSERT INTO expense_payments (
       expense_id, month_year, actual_amount, status, due_date
-    ) VALUES (?, ?, ?, ?, ?)
+    )
+    VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(expense_id, month_year)
     DO UPDATE SET
       actual_amount = excluded.actual_amount,
@@ -3983,19 +4188,95 @@ app.post("/saveExpensePayment", (req, res) => {
   `;
 
   db.run(
-    sql,
+    expenseSQL,
     [expense_id, month_year, actual_amount, status, due_date],
     function (err) {
       if (err) {
-        console.error("Error saving payment:", err);
-        console.log(err)
-        return res.status(500).send("DB error");
-        
+        console.error("❌ Error saving expense_payment:", err);
+        return res.status(500).send("DB error while saving expense");
       }
-      res.send({ message: "Saved", id: this.lastID });
+
+      // 2️⃣ Now also update MONTHLY SALARY table
+      updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date);
+
+      res.send({ message: "Expense & Salary Updated", id: this.lastID });
     }
   );
 });
+
+// db.run(`
+//   CREATE UNIQUE INDEX IF NOT EXISTS idx_salary_unique
+//   ON monthly_salary_payments (employee_id, month);
+// `);
+
+function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date) {
+  // 1️⃣ Get expense type to find employee
+  const findExpense = `
+    SELECT type FROM expenses WHERE auto_id = ?
+  `;
+
+  db.get(findExpense, [expense_id], (err, exp) => {
+    if (err || !exp) {
+      return console.error("❌ Expense not found for salary sync.");
+    }
+
+    const type = exp.type;
+
+    // Must be like: Salary - David Santhan (IND343)
+    if (!/salary/i.test(type)) {
+      return; // not a salary expense
+    }
+
+    // Extract name and ID
+    const namePart = type.replace(/salary\s*-\s*/i, "").trim();
+    const employeeName = namePart.replace(/\([^)]*\)/g, "").trim(); // "David Santhan"
+    const idMatch = type.match(/\(([^)]+)\)/);                      // (IND343)
+    const employee_id = idMatch ? idMatch[1] : null;
+
+    if (!employee_id) {
+      return console.error("❌ Could not extract employee_id from:", type);
+    }
+
+    // ==========================================================
+    // 2️⃣ UPSERT into monthly_salary_payments
+    // ==========================================================
+    const salarySQL = `
+      INSERT INTO monthly_salary_payments (
+        employee_id,
+        employee_name,
+        paid,
+        month,
+        lop,
+        paid_amount,
+        actual_to_pay,
+        paid_date,
+        due_date
+      )
+      VALUES (?, ?, 'No', ?, 0, 0, ?, NULL, ?)
+
+      ON CONFLICT(employee_id, month)
+      DO UPDATE SET
+        actual_to_pay = excluded.actual_to_pay,
+        due_date = excluded.due_date,
+        paid = 'No',
+        paid_amount = 0,
+        paid_date = NULL;
+    `;
+
+    db.run(
+      salarySQL,
+      [employee_id, employeeName, month_year, actual_amount, due_date],
+      (err) => {
+        if (err) {
+          console.error("❌ Error updating monthly salary:", err);
+        } else {
+          console.log("✅ Monthly salary updated from expense payment");
+        }
+      }
+    );
+  });
+}
+
 
 
 
