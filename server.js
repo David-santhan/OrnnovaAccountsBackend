@@ -940,7 +940,7 @@ app.get("/transactions/:forecastId", (req, res) => {
   });
 });
 
-// Post Invoices
+// Post Invoices and GST Expense Adding
 app.post("/invoices", (req, res) => {
   const {
     invoice_number,
@@ -959,38 +959,32 @@ app.post("/invoices", (req, res) => {
     received_date
   } = req.body;
 
-  // First, get client's paymentTerms from ClientsTable
+  // Step 1: Get client's paymentTerms
   db.get(
     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
     [client_name],
     (err, client) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Error fetching client data" });
-      }
-
-      if (!client) {
-        return res.status(400).json({ error: "Client not found" });
-      }
+      if (err) return res.status(500).json({ error: "Error fetching client data" });
+      if (!client) return res.status(400).json({ error: "Client not found" });
 
       const paymentTerms = client.paymentTerms || 0;
 
-      // Calculate due_date if not provided
+      // Calculate due_date if missing
       let finalDueDate = due_date;
       if (!finalDueDate || finalDueDate.trim() === "") {
         const d = new Date(invoice_date);
-        d.setDate(d.getDate() + paymentTerms + 2); // as per your logic
+        d.setDate(d.getDate() + paymentTerms + 2);
         finalDueDate = d.toISOString().split("T")[0];
       }
 
-      // Insert invoice
+      // Step 2: Insert Invoice
       const sql = `
         INSERT INTO invoices (
           invoice_number, invoice_date, client_name, project_id,
           start_date, end_date, invoice_cycle, invoice_value,
-          gst_amount, due_date, billable_days,non_billable_days, received, received_date
+          gst_amount, due_date, billable_days, non_billable_days, received, received_date
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       db.run(
@@ -1016,12 +1010,66 @@ app.post("/invoices", (req, res) => {
             console.error("Insert error:", err);
             return res.status(500).json({ error: err.message });
           }
-          res.json({ success: true, id: this.lastID });
+
+          const invoiceId = this.lastID;
+
+          // =====================================
+          // Step 3: Insert GST Expense Automatically
+          // =====================================
+
+          const today = new Date();
+          const raisedDate = today.toISOString().split("T")[0];
+
+          // Compute due date: 20th of next month
+          const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 20);
+          const gstDueDate = nextMonth.toISOString().split("T")[0];
+
+          const expSql = `
+            INSERT INTO expenses (
+              regular, type, description, amount, currency, 
+              raised_date, due_date, paid_date, paid_amount, 
+              Active, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `;
+
+          const descriptionText = `GST for Invoice ${invoice_number} from ${start_date} to ${end_date}`;
+
+          db.run(
+            expSql,
+            [
+              "No",
+              "GST",
+              descriptionText,
+              gst_amount,
+              "INR",
+              raisedDate,
+              gstDueDate,
+              null,
+              null,
+              "Yes",
+              "Raised"
+            ],
+            function (expErr) {
+              if (expErr) {
+                console.error("Expense Insert Error:", expErr);
+                return res.status(500).json({ error: expErr.message });
+              }
+
+              // FINAL RESPONSE
+              res.json({
+                success: true,
+                invoice_id: invoiceId,
+                expense_id: this.lastID,
+                message: "Invoice and GST expense saved successfully"
+              });
+            }
+          );
         }
       );
     }
   );
 });
+
 
 // Get Invoices
 app.get("/invoices", (req, res) => {
@@ -3551,6 +3599,8 @@ oneTimeExpenses.forEach((exp) => {
     return res.status(500).json({ success: false, message: err.message, months: [] });
   }
 });
+
+// Getting monthly last balance for forecasting
 
 app.get("/monthly-last-balances", (req, res) => {
   const { month } = req.query; // YYYY-MM
