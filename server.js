@@ -3506,25 +3506,30 @@ oneTimeExpenses.forEach((exp) => {
       }
 
       // C) One-time new unpaid due in this month
-      oneTimeExpenses.forEach((exp) => {
-        const r = exp.raised_date?.slice(0, 7);
-        const d = exp.due_date?.slice(0, 7);
-        // check paid status from expense_payments (paid entries)
-        const isPaid = expensePayments.some((p) => p.expense_id === exp.auto_id);
+     // C) One-time unpaid expenses — filter ONLY by DUE DATE
+oneTimeExpenses.forEach((exp) => {
+  const d = exp.due_date?.slice(0, 7);
 
-        if (!isPaid && (r === monthKey || d === monthKey)) {
-          if (!monthAddedExpenseIds.has(exp.auto_id)) {
-            monthAddedExpenseIds.add(exp.auto_id);
-            forecastExpenseItems.push({
-              expense_id: exp.auto_id,
-              type: exp.type,
-              description: exp.description,
-              amount: Number(exp.amount || 0),
-              due_date: exp.due_date,
-            });
-          }
-        }
+  // must have a due date month
+  if (!d) return;
+
+  const isPaid = expensePayments.some((p) => p.expense_id === exp.auto_id);
+
+  // show only when due_date === current month AND not paid
+  if (!isPaid && d === monthKey) {
+    if (!monthAddedExpenseIds.has(exp.auto_id)) {
+      monthAddedExpenseIds.add(exp.auto_id);
+      forecastExpenseItems.push({
+        expense_id: exp.auto_id,
+        type: exp.type,
+        description: exp.description,
+        amount: Number(exp.amount || 0),
+        due_date: exp.due_date,
       });
+    }
+  }
+});
+
 
       const forecastExpenseTotal = forecastExpenseItems.reduce(
         (sum, it) => sum + Number(it.amount || 0),
