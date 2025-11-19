@@ -2132,11 +2132,6 @@ function updateSalaryOnExpensePaid(expenseType, month_year, paidAmount, paidDate
 
 
 
-
-
-
-
-
 // Get monthly salary by month
 app.get("/monthlySalary", (req, res) => {
   const query = `
@@ -2302,7 +2297,6 @@ app.get("/getexpenses", (req, res) => {
 });
 
 
-
 // POST expense
 app.post("/postexpenses", (req, res) => {
   const { regular, type, description, amount, currency, raised_date, due_date, paid_date, paid_amount, status } = req.body;
@@ -2418,9 +2412,6 @@ app.get("/api/pending-salaries", (req, res) => {
 
 });
  
-
-
-
 app.put("/updateexpense/:id", (req, res) => {
   let { id } = req.params;
   const {
@@ -2713,7 +2704,6 @@ app.post("/accounts", (req, res) => {
     });
   });
 });
-
 
 // PATCH: Add balance
 app.patch("/accounts/:number/add-balance", (req, res) => {
@@ -4928,7 +4918,6 @@ function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date
     );
   });
 }
-
 
 
 
