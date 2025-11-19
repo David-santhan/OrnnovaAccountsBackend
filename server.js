@@ -953,7 +953,7 @@ app.get("/transactions/:forecastId", (req, res) => {
   });
 });
 
-// Post Invoices
+// Post Invoices and GST Expense Adding
 app.post("/invoices", (req, res) => {
   const {
     invoice_number,
@@ -972,38 +972,32 @@ app.post("/invoices", (req, res) => {
     received_date
   } = req.body;
 
-  // First, get client's paymentTerms from ClientsTable
+  // Step 1: Get client's paymentTerms
   db.get(
     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
     [client_name],
     (err, client) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ error: "Error fetching client data" });
-      }
-
-      if (!client) {
-        return res.status(400).json({ error: "Client not found" });
-      }
+      if (err) return res.status(500).json({ error: "Error fetching client data" });
+      if (!client) return res.status(400).json({ error: "Client not found" });
 
       const paymentTerms = client.paymentTerms || 0;
 
-      // Calculate due_date if not provided
+      // Calculate due_date if missing
       let finalDueDate = due_date;
       if (!finalDueDate || finalDueDate.trim() === "") {
         const d = new Date(invoice_date);
-        d.setDate(d.getDate() + paymentTerms + 2); // as per your logic
+        d.setDate(d.getDate() + paymentTerms + 2);
         finalDueDate = d.toISOString().split("T")[0];
       }
 
-      // Insert invoice
+      // Step 2: Insert Invoice
       const sql = `
         INSERT INTO invoices (
           invoice_number, invoice_date, client_name, project_id,
           start_date, end_date, invoice_cycle, invoice_value,
-          gst_amount, due_date, billable_days,non_billable_days, received, received_date
+          gst_amount, due_date, billable_days, non_billable_days, received, received_date
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `;
 
       db.run(
@@ -1029,12 +1023,66 @@ app.post("/invoices", (req, res) => {
             console.error("Insert error:", err);
             return res.status(500).json({ error: err.message });
           }
-          res.json({ success: true, id: this.lastID });
+
+          const invoiceId = this.lastID;
+
+          // =====================================
+          // Step 3: Insert GST Expense Automatically
+          // =====================================
+
+          const today = new Date();
+          const raisedDate = today.toISOString().split("T")[0];
+
+          // Compute due date: 20th of next month
+          const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 20);
+          const gstDueDate = nextMonth.toISOString().split("T")[0];
+
+          const expSql = `
+            INSERT INTO expenses (
+              regular, type, description, amount, currency, 
+              raised_date, due_date, paid_date, paid_amount, 
+              Active, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `;
+
+          const descriptionText = `GST for Invoice ${invoice_number} from ${start_date} to ${end_date}`;
+
+          db.run(
+            expSql,
+            [
+              "No",
+              "GST",
+              descriptionText,
+              gst_amount,
+              "INR",
+              raisedDate,
+              gstDueDate,
+              null,
+              null,
+              "Yes",
+              "Raised"
+            ],
+            function (expErr) {
+              if (expErr) {
+                console.error("Expense Insert Error:", expErr);
+                return res.status(500).json({ error: expErr.message });
+              }
+
+              // FINAL RESPONSE
+              res.json({
+                success: true,
+                invoice_id: invoiceId,
+                expense_id: this.lastID,
+                message: "Invoice and GST expense saved successfully"
+              });
+            }
+          );
         }
       );
     }
   );
 });
+
 
 // Get Invoices
 app.get("/invoices", (req, res) => {
@@ -3138,6 +3186,310 @@ function monthKey(dateStr) {
 //   }
 // });
 
+// app.get("/forecast", async (req, res) => {
+//   try {
+//     const db = req.app.locals.db;
+//     if (!db) throw new Error("Database not initialized");
+
+//     const runQuery = (sql, params = []) =>
+//       new Promise((resolve, reject) =>
+//         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
+//       );
+
+//     const today = new Date();
+//     const startYear = today.getFullYear();
+//     const endYear = today.getFullYear() + 2;
+
+//     const generateMonthRange = (start, end) => {
+//       const result = [];
+//       const [sy, sm] = start.split("-").map(Number);
+//       const [ey, em] = end.split("-").map(Number);
+//       let y = sy, m = sm;
+//       while (y < ey || (y === ey && m <= em)) {
+//         result.push(`${y.toString().padStart(4, "0")}-${m.toString().padStart(2, "0")}`);
+//         m++;
+//         if (m === 13) { m = 1; y++; }
+//       }
+//       return result;
+//     };
+
+//     const monthKeys = generateMonthRange(`${startYear}-01`, `${endYear}-12`);
+
+//     // fetch data
+//     const projects = await runQuery(
+//       `SELECT projectID, projectName, startDate, endDate, netPayable, invoiceCycle, active
+//        FROM Projects`
+//     );
+
+//     const invoices = await runQuery(
+//       `SELECT id, invoice_number, project_id, invoice_value, gst_amount, due_date, received
+//        FROM invoices WHERE due_date IS NOT NULL`
+//     );
+
+//     const actualReceivedInvoices = await runQuery(
+//       `SELECT id, invoice_number, project_id, invoice_value, gst_amount, received_date
+//        FROM invoices WHERE received = 'Yes' AND received_date IS NOT NULL`
+//     );
+
+//     const allExpenses = await runQuery(
+//       `SELECT auto_id, regular, type, description, amount, raised_date, due_date
+//        FROM expenses WHERE raised_date IS NOT NULL`
+//     );
+
+//     const expensePayments = await runQuery(
+//   `SELECT
+//      ep.id,
+//      ep.expense_id,
+//      ep.month_year,
+//      ep.actual_amount AS actual_amount,
+//      ep.paid_amount AS paid_amount,
+//      ep.paid_date AS paid_date,
+//      ep.status AS status,
+//      e.regular AS regular,
+//      e.type AS expense_type,
+//      e.description AS expense_description,
+//      e.amount AS base_amount
+//    FROM expense_payments ep
+//    LEFT JOIN expenses e ON e.auto_id = ep.expense_id`
+// );
+
+
+//     // maps
+//     const invoicesByDueMonth = {};
+//     invoices.forEach(inv => {
+//       const m = inv.due_date?.slice(0, 7);
+//       if (m) (invoicesByDueMonth[m] ||= []).push(inv);
+//     });
+
+//     const actualReceivedByMonth = {};
+//     actualReceivedInvoices.forEach(inv => {
+//       const m = inv.received_date?.slice(0, 7);
+//       if (m) (actualReceivedByMonth[m] ||= []).push(inv);
+//     });
+
+//     const paidExpensesByMonth = {};
+//     expensePayments.forEach(ep => {
+//       const m = ep.paid_date?.slice(0, 7) || ep.month_year?.slice(0, 7);
+//       if (m) (paidExpensesByMonth[m] ||= []).push(ep);
+//     });
+
+//     // const paymentsByExpenseId = {};
+//     // expensePayments.forEach(p => {
+//     //   (paymentsByExpenseId[p.expense_id] ||= []).push(p);
+//     // });
+//     const paymentsByExpenseId = {};
+// expensePayments.forEach(raw => {
+//   const p = {
+//     ...raw,
+//     // coerce numbers and normalize null -> undefined for easier checks
+//     paid_amount: raw.paid_amount != null ? Number(raw.paid_amount) : (raw.actual_amount != null ? Number(raw.actual_amount) : null),
+//     actual_amount: raw.actual_amount != null ? Number(raw.actual_amount) : null,
+//     month_year: raw.month_year || null,
+//     paid_date: raw.paid_date || null,
+//     status: raw.status || null,
+//   };
+//   (paymentsByExpenseId[p.expense_id] ||= []).push(p);
+// });
+
+
+//     const normalizeRegular = val => {
+//       if (val === null || val === undefined) return "No";
+//       const s = String(val).trim().toLowerCase();
+//       return ["yes", "y", "true", "1"].includes(s) ? "Yes" : "No";
+//     };
+
+//     // const getLatestPayment = (expenseId) => {
+//     //   const list = paymentsByExpenseId[expenseId] || [];
+//     //   if (!list.length) return null;
+//     //   const paidFirst = list.find(p => String(p.status).toLowerCase() === "paid");
+//     //   if (paidFirst) return paidFirst;
+//     //   return [...list].sort((a, b) => {
+//     //     const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
+//     //     const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
+//     //     return db - da;
+//     //   })[0];
+//     // };
+
+//     const getLatestPayment = (expenseId) => {
+//   const list = paymentsByExpenseId[expenseId] || [];
+//   if (!list.length) return null;
+
+//   // prefer a payment that is explicitly Paid
+//   const paidFirst = list.find(p => String(p.status || "").toLowerCase() === "paid");
+//   if (paidFirst) {
+//     return {
+//       ...paidFirst,
+//       paid_amount: paidFirst.paid_amount != null ? Number(paidFirst.paid_amount) : (paidFirst.actual_amount != null ? Number(paidFirst.actual_amount) : 0),
+//       paid_date: paidFirst.paid_date || null,
+//     };
+//   }
+
+//   // else take the latest by paid_date or month_year
+//   const sorted = [...list].sort((a, b) => {
+//     const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
+//     const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
+//     return db - da;
+//   });
+
+//   const latest = sorted[0];
+//   return {
+//     ...latest,
+//     paid_amount: latest.paid_amount != null ? Number(latest.paid_amount) : (latest.actual_amount != null ? Number(latest.actual_amount) : 0),
+//     paid_date: latest.paid_date || null,
+//   };
+// };
+
+    
+//     const regularExpenses = allExpenses.filter(e => normalizeRegular(e.regular) === "Yes");
+//     const oneTimeExpenses = allExpenses.filter(e => normalizeRegular(e.regular) === "No");
+
+//     const months = [];
+
+//     for (const monthKey of monthKeys) {
+//       const forecastExpenseItems = [];
+
+//       // Helper to convert monthKey -> ISO day for effective_due_date
+//       const monthKeyToFirstDay = (mk) => `${mk}-01`;
+
+//       // A) Regular recurring expenses — appear each month if started
+//       regularExpenses.forEach(exp => {
+//         const start = exp.raised_date?.slice(0, 7) || exp.due_date?.slice(0, 7);
+//         if (start && start <= monthKey) {
+//           const latest = getLatestPayment(exp.auto_id);
+//           forecastExpenseItems.push({
+//             expense_id: exp.auto_id,
+//             type: exp.type,
+//             description: exp.description,
+//             amount: Number(exp.amount),
+//             regular: normalizeRegular(exp.regular),
+//             original_due_date: exp.due_date || null,                 // <-- original stored due_date
+//             effective_due_date: exp.due_date ? exp.due_date : monthKeyToFirstDay(monthKey), // <-- what UI should display for this row
+//             due_date: exp.due_date,
+//             paid_amount: latest ? (latest.paid_amount != null ? Number(latest.paid_amount) : Number(latest.actual_amount || 0)) : 0,
+//             paid_date: latest ? latest.paid_date || null : null,
+//             status: latest ? (latest.status || "Paid") : "Unpaid",
+//           });
+//         }
+//       });
+
+//       // B) One-time expenses — carry forward until Paid
+//       oneTimeExpenses.forEach(exp => {
+//         const start = exp.due_date?.slice(0, 7) || exp.raised_date?.slice(0, 7);
+//         if (!start) return;
+//         if (start <= monthKey) {
+//           const latest = getLatestPayment(exp.auto_id);
+//           const isPaid = latest && String(latest.status).toLowerCase() === "paid";
+//           if (!isPaid) {
+//             forecastExpenseItems.push({
+//               expense_id: exp.auto_id,
+//               type: exp.type,
+//               description: exp.description,
+//               amount: Number(exp.amount),
+//               regular: normalizeRegular(exp.regular),
+//               original_due_date: exp.due_date || null,                    // original due_date from expenses table
+//               effective_due_date: monthKeyToFirstDay(monthKey),           // carry-forward: show this month as due
+//               due_date: exp.due_date,
+//               paid_amount: latest ? (latest.paid_amount != null ? Number(latest.paid_amount) : Number(latest.actual_amount || 0)) : 0,
+//               paid_date: latest ? latest.paid_date || null : null,
+//               status: latest ? (latest.status || "Unpaid") : "Unpaid",
+//             });
+//           }
+//         }
+//       });
+
+//       // C) Actual paid expense rows for this month
+//       const actualExpenseItems =
+//         (paidExpensesByMonth[monthKey] || []).map(ep => ({
+//           expense_id: ep.expense_id,
+//           expense_type: ep.expense_type,
+//           description: ep.expense_description,
+//           amount: ep.paid_amount != null ? Number(ep.paid_amount) : Number(ep.actual_amount || ep.base_amount || 0),
+//           paid_date: ep.paid_date,
+//           regular: normalizeRegular(ep.regular),
+//           status: ep.status || "Paid",
+//         }));
+
+//       const actualExpenseTotal = actualExpenseItems.reduce((s, a) => s + a.amount, 0);
+//       const forecastExpenseTotal = forecastExpenseItems.reduce((s, a) => s + Number(a.paid_amount || a.amount || 0), 0);
+
+//       // Income actual/forecast same as before
+//       const actualIncomeItems =
+//         (actualReceivedByMonth[monthKey] || []).map(inv => ({
+//           invoice_id: inv.id,
+//           invoice_number: inv.invoice_number,
+//           project_id: inv.project_id,
+//           invoice_value: Number(inv.invoice_value),
+//           total_with_gst: Number(inv.invoice_value),
+//           gst_amount: Number(inv.gst_amount || 0),
+//           received_date: inv.received_date,
+//         })) || [];
+
+//       const actualIncomeTotal = actualIncomeItems.reduce((s, a) => s + a.total_with_gst, 0);
+
+//       const forecastIncomeItems = (invoicesByDueMonth[monthKey] || []).map(inv => ({
+//         invoice_id: inv.id,
+//         invoice_number: inv.invoice_number,
+//         project_id: inv.project_id,
+//         invoice_value: Number(inv.invoice_value),
+//         total_with_gst: Number(inv.invoice_value),
+//         gst_amount: Number(inv.gst_amount || 0),
+//         due_date: inv.due_date,
+//       }));
+
+//       // project-based forecasts (unchanged)...
+//       projects.forEach((p) => {
+//         const netPayable = Number(p.netPayable || p.net_payable || 0);
+//         if (!netPayable || netPayable <= 0) return;
+//         const startMonth = p.startDate ? String(p.startDate).slice(0, 7) : null;
+//         const endMonth = p.endDate ? String(p.endDate).slice(0, 7) : null;
+//         if (startMonth && monthKey < startMonth) return;
+//         if (endMonth && monthKey > endMonth) return;
+//         const cycle = String(p.invoiceCycle || "Monthly").toLowerCase();
+//         if (cycle === "quarterly" && startMonth) {
+//           const [sy, sm] = startMonth.split("-").map(Number);
+//           const [cy, cm] = monthKey.split("-").map(Number);
+//           const diff = (cy - sy) * 12 + (cm - sm);
+//           if (diff % 3 !== 0) return;
+//         }
+//         const invoiceExists = (invoicesByDueMonth[monthKey] || []).some(inv => inv.project_id === p.projectID);
+//         if (invoiceExists) return;
+//         forecastIncomeItems.push({
+//           project_id: p.projectID,
+//           projectName: p.projectName,
+//           invoice_value: netPayable,
+//           total_with_gst: netPayable,
+//           gst_amount: 0,
+//           note: "project forecast",
+//         });
+//       });
+
+//       const forecastIncomeTotal = forecastIncomeItems.reduce((s, a) => s + Number(a.total_with_gst || a.invoice_value || a.amount || 0), 0);
+
+//       months.push({
+//         month: monthKey,
+//         actualIncomeTotal,
+//         actualIncomeItems,
+//         forecastIncomeTotal,
+//         forecastIncomeItems,
+//         actualExpenseTotal,
+//         actualExpenseItems,
+//         forecastExpenseTotal,
+//         forecastExpenseItems,
+//         monthlyBalance: forecastIncomeTotal - forecastExpenseTotal,
+//       });
+//     }
+
+//     return res.json({
+//       success: true,
+//       message: "Forecast generated successfully",
+//       months,
+//     });
+//   } catch (err) {
+//     console.error("❌ Forecast Error:", err);
+//     return res.status(500).json({ success: false, message: err.message });
+//   }
+// });
+
 app.get("/forecast", async (req, res) => {
   try {
     const db = req.app.locals.db;
@@ -3189,15 +3541,28 @@ app.get("/forecast", async (req, res) => {
     );
 
     const expensePayments = await runQuery(
-      `SELECT ep.id, ep.expense_id, ep.month_year, ep.actual_amount, ep.paid_amount,
-              ep.paid_date, ep.status,
-              e.regular AS regular,
-              e.type AS expense_type,
-              e.description AS expense_description,
-              e.amount AS base_amount
-       FROM expense_payments ep
-       LEFT JOIN expenses e ON e.auto_id = ep.expense_id`
-    );
+  `SELECT
+     ep.id,
+     ep.expense_id,
+     ep.month_year,
+     ep.actual_amount AS actual_amount,
+     ep.paid_amount AS paid_amount,
+     ep.paid_date AS paid_date,
+     ep.status AS status,
+     e.regular AS regular,
+     e.type AS expense_type,
+     e.description AS expense_description,
+     e.amount AS base_amount
+   FROM expense_payments ep
+   LEFT JOIN expenses e ON e.auto_id = ep.expense_id`
+);
+
+
+    // --- ADD: map expenses by id for due_date lookup later ---
+    const expensesById = {};
+    allExpenses.forEach(e => {
+      expensesById[e.auto_id] = e;
+    });
 
     // maps
     const invoicesByDueMonth = {};
@@ -3218,10 +3583,24 @@ app.get("/forecast", async (req, res) => {
       if (m) (paidExpensesByMonth[m] ||= []).push(ep);
     });
 
+    // const paymentsByExpenseId = {};
+    // expensePayments.forEach(p => {
+    //   (paymentsByExpenseId[p.expense_id] ||= []).push(p);
+    // });
     const paymentsByExpenseId = {};
-    expensePayments.forEach(p => {
-      (paymentsByExpenseId[p.expense_id] ||= []).push(p);
-    });
+expensePayments.forEach(raw => {
+  const p = {
+    ...raw,
+    // coerce numbers and normalize null -> undefined for easier checks
+    paid_amount: raw.paid_amount != null ? Number(raw.paid_amount) : (raw.actual_amount != null ? Number(raw.actual_amount) : null),
+    actual_amount: raw.actual_amount != null ? Number(raw.actual_amount) : null,
+    month_year: raw.month_year || null,
+    paid_date: raw.paid_date || null,
+    status: raw.status || null,
+  };
+  (paymentsByExpenseId[p.expense_id] ||= []).push(p);
+});
+
 
     const normalizeRegular = val => {
       if (val === null || val === undefined) return "No";
@@ -3229,18 +3608,48 @@ app.get("/forecast", async (req, res) => {
       return ["yes", "y", "true", "1"].includes(s) ? "Yes" : "No";
     };
 
-    const getLatestPayment = (expenseId) => {
-      const list = paymentsByExpenseId[expenseId] || [];
-      if (!list.length) return null;
-      const paidFirst = list.find(p => String(p.status).toLowerCase() === "paid");
-      if (paidFirst) return paidFirst;
-      return [...list].sort((a, b) => {
-        const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
-        const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
-        return db - da;
-      })[0];
-    };
+    // const getLatestPayment = (expenseId) => {
+    //   const list = paymentsByExpenseId[expenseId] || [];
+    //   if (!list.length) return null;
+    //   const paidFirst = list.find(p => String(p.status).toLowerCase() === "paid");
+    //   if (paidFirst) return paidFirst;
+    //   return [...list].sort((a, b) => {
+    //     const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
+    //     const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
+    //     return db - da;
+    //   })[0];
+    // };
 
+    const getLatestPayment = (expenseId) => {
+  const list = paymentsByExpenseId[expenseId] || [];
+  if (!list.length) return null;
+
+  // prefer a payment that is explicitly Paid
+  const paidFirst = list.find(p => String(p.status || "").toLowerCase() === "paid");
+  if (paidFirst) {
+    return {
+      ...paidFirst,
+      paid_amount: paidFirst.paid_amount != null ? Number(paidFirst.paid_amount) : (paidFirst.actual_amount != null ? Number(paidFirst.actual_amount) : 0),
+      paid_date: paidFirst.paid_date || null,
+    };
+  }
+
+  // else take the latest by paid_date or month_year
+  const sorted = [...list].sort((a, b) => {
+    const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
+    const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
+    return db - da;
+  });
+
+  const latest = sorted[0];
+  return {
+    ...latest,
+    paid_amount: latest.paid_amount != null ? Number(latest.paid_amount) : (latest.actual_amount != null ? Number(latest.actual_amount) : 0),
+    paid_date: latest.paid_date || null,
+  };
+};
+
+    
     const regularExpenses = allExpenses.filter(e => normalizeRegular(e.regular) === "Yes");
     const oneTimeExpenses = allExpenses.filter(e => normalizeRegular(e.regular) === "No");
 
@@ -3299,16 +3708,29 @@ app.get("/forecast", async (req, res) => {
       });
 
       // C) Actual paid expense rows for this month
+      // <-- REPLACED: include due_date (from expenses table when available) and paid_amount
       const actualExpenseItems =
-        (paidExpensesByMonth[monthKey] || []).map(ep => ({
-          expense_id: ep.expense_id,
-          expense_type: ep.expense_type,
-          description: ep.expense_description,
-          amount: ep.paid_amount != null ? Number(ep.paid_amount) : Number(ep.actual_amount || ep.base_amount || 0),
-          paid_date: ep.paid_date,
-          regular: normalizeRegular(ep.regular),
-          status: ep.status || "Paid",
-        }));
+        (paidExpensesByMonth[monthKey] || []).map(ep => {
+          const paidAmount = ep.paid_amount != null
+            ? Number(ep.paid_amount)
+            : (ep.actual_amount != null ? Number(ep.actual_amount) : Number(ep.base_amount || 0));
+
+          const original = expensesById[ep.expense_id] || null;
+          const dueDate = original ? original.due_date : (ep.due_date || null);
+
+          return {
+            expense_id: ep.expense_id,
+            expense_type: ep.expense_type,
+            description: ep.expense_description,
+            amount: paidAmount,
+            paid_amount: paidAmount,
+            actual_amount: ep.actual_amount != null ? Number(ep.actual_amount) : null,
+            due_date: dueDate || null,     // <-- due_date from expenses table (preferred)
+            paid_date: ep.paid_date || null,
+            regular: normalizeRegular(ep.regular),
+            status: ep.status || "Paid",
+          };
+        });
 
       const actualExpenseTotal = actualExpenseItems.reduce((s, a) => s + a.amount, 0);
       const forecastExpenseTotal = forecastExpenseItems.reduce((s, a) => s + Number(a.paid_amount || a.amount || 0), 0);
@@ -3390,7 +3812,6 @@ app.get("/forecast", async (req, res) => {
     return res.status(500).json({ success: false, message: err.message });
   }
 });
-
 
 
 
@@ -3805,6 +4226,8 @@ app.get("/forecast", async (req, res) => {
 
 
 
+
+// Getting monthly last balance for forecasting
 
 app.get("/monthly-last-balances", (req, res) => {
   const { month } = req.query; // YYYY-MM
