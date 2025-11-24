@@ -3170,424 +3170,6 @@ function monthKey(dateStr) {
 
 
 
-// app.get("/forecast", async (req, res) => {
-//   try {
-//     const db = req.app.locals.db;
-//     if (!db) throw new Error("Database not initialized");
-
-//     const runQuery = (sql, params = []) =>
-//       new Promise((resolve, reject) =>
-//         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
-//       );
-
-//     const today = new Date();
-
-//     // generate months from startYear-01 to endYear-12 (2 years ahead by default)
-//     const startYear = today.getFullYear();
-//     const endYear = today.getFullYear() + 2;
-
-//     const generateMonthRange = (start, end) => {
-//       // start/end in "YYYY-MM"
-//       const result = [];
-//       const [sy, sm] = start.split("-").map(Number);
-//       const [ey, em] = end.split("-").map(Number);
-
-//       let y = sy;
-//       let m = sm;
-//       while (y < ey || (y === ey && m <= em)) {
-//         result.push(`${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`);
-//         m++;
-//         if (m === 13) {
-//           m = 1;
-//           y++;
-//         }
-//       }
-//       return result;
-//     };
-
-//     const monthKeys = generateMonthRange(`${startYear}-01`, `${endYear}-12`);
-//     const startMonthDate = monthKeys[0] + "-01";
-//     const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
-
-//     // -------------------------
-//     // Raw data queries
-//     // -------------------------
-//     const projects = await runQuery(
-//       `SELECT projectID, projectName, startDate, endDate, netPayable, invoiceCycle, active FROM Projects`
-//     );
-
-//     const invoices = await runQuery(
-//       `SELECT id, invoice_number, project_id, invoice_value, gst_amount, due_date, received
-//        FROM invoices
-//        WHERE due_date IS NOT NULL
-//          AND date(due_date) BETWEEN date(?) AND date(?)`,
-//       [startMonthDate, endMonthDate]
-//     );
-
-//     const actualReceivedInvoices = await runQuery(
-//       `SELECT id, invoice_number, project_id, invoice_value, gst_amount, received_date
-//        FROM invoices
-//        WHERE received = 'Yes'
-//          AND received_date IS NOT NULL
-//          AND date(received_date) BETWEEN date(?) AND date(?)`,
-//       [startMonthDate, endMonthDate]
-//     );
-
-//     // expenses table (matches your schema)
-//     const allExpenses = await runQuery(
-//       `SELECT auto_id, regular, type, description, amount, raised_date, due_date, paid_date, paid_amount, status
-//        FROM expenses
-//        WHERE raised_date IS NOT NULL`
-//     );
-
-//     // expense_payments table (matches your schema). Join to get expense type/description for convenience.
-//     const expensePayments = await runQuery(
-//       `SELECT ep.id, ep.expense_id, ep.month_year, ep.actual_amount, ep.paid_amount, ep.paid_date, ep.status,
-//               e.type AS expense_type, e.description AS expense_description
-//        FROM expense_payments ep
-//        LEFT JOIN expenses e ON e.auto_id = ep.expense_id
-//        WHERE ep.status = 'Paid'
-//          AND ep.paid_date BETWEEN date(?) AND date(?)`,
-//       [startMonthDate, endMonthDate]
-//     );
-
-
-//     // -------------------------
-//     // Helper maps
-//     // -------------------------
-//     const invoicesByDueMonth = {};
-//     invoices.forEach((inv) => {
-//       const month = inv.due_date?.slice(0, 7);
-//       if (!month) return;
-//       (invoicesByDueMonth[month] ||= []).push(inv);
-//     });
-
-//     const actualReceivedByMonth = {};
-//     actualReceivedInvoices.forEach((inv) => {
-//       const month = inv.received_date?.slice(0, 7);
-//       if (!month) return;
-//       (actualReceivedByMonth[month] ||= []).push(inv);
-//     });
-
-//     const paidExpensesByMonth = {};
-//     expensePayments.forEach((ep) => {
-//       // use paid_date if available; fallback to month_year column if paid_date not present
-//       const month = ep.paid_date ? ep.paid_date.slice(0, 7) : (ep.month_year || "").slice(0, 7);
-//       if (!month) return;
-//       (paidExpensesByMonth[month] ||= []).push(ep);
-//     });
-
-//     const projectMap = {};
-//     projects.forEach((p) => (projectMap[p.projectID] = p));
-
-//     // -------------------------
-//     // Normalize regular flag
-//     // -------------------------
-//     const normalizeRegular = (val) => {
-//       if (val === null || val === undefined) return "no";
-//       // Accept 'Yes'/'No' or truthy values; normalize to 'yes' or 'no'
-//       const s = String(val).trim().toLowerCase();
-//       if (s === "yes" || s === "y" || s === "true" || s === "1") return "yes";
-//       return "no";
-//     };
-
-//     const regularExpenses = allExpenses.filter((e) => normalizeRegular(e.regular) === "yes");
-//     // const oneTimeExpenses = allExpenses.filter((e) => normalizeRegular(e.regular) === "no");
-
-// const paidExpenseIds = new Set(expensePayments.map((p) => p.expense_id));
-
-// const carryForwardMapInit = {};
- 
-// // Only for REGULAR = "No"
-
-// const oneTimeExpenses = allExpenses.filter(exp => exp.regular === "No");
- 
-// oneTimeExpenses.forEach((exp) => {
-
-//   const raisedMonth = exp.raised_date?.slice(0, 7);
-
-//   const dueMonth = exp.due_date?.slice(0, 7) || raisedMonth;
- 
-//   // IF PAID → SHOW IN PAID MONTH WITH PAID AMOUNT
-
-//   if (paidExpenseIds.has(exp.auto_id)) {
-
-//     const payment = expensePayments.find(p => p.expense_id === exp.auto_id);
-
-//     const paidMonth = payment.paid_date?.slice(0, 7);
- 
-//     if (paidMonth) {
-
-//       (carryForwardMapInit[paidMonth] ||= []).push({
-
-//         ...exp,
-
-//         status: "Paid",
-
-//         paid_amount: payment.paid_amount,   // <-- PAID AMOUNT HERE
-
-//         actual_amount: payment.actual_amount,
-
-//         paid_date: payment.paid_date,
-
-//         month_year: payment.month_year
-
-//       });
-
-//     }
- 
-//     return; // PAID → STOP (don't carry forward)
-
-//   }
- 
-//   // IF NOT PAID → CARRY FORWARD TO DUE MONTH
-
-//   const start = dueMonth || raisedMonth;
-
-//   if (start) {
-
-//     (carryForwardMapInit[start] ||= []).push({
-
-//       ...exp,
-
-//       status: "Unpaid",
-
-//       paid_amount: 0,     // unpaid → no paid amount
-
-//     });
-
-//   }
-
-// });
-
-//     // -------------------------
-//     // Build month-wise forecast
-//     // -------------------------
-//     const months = [];
-//     let pendingExpenses = [];
-
-//     for (const monthKey of monthKeys) {
-//       // bring forward carry-forward items into pending (avoid duplicates)
-//       if (carryForwardMapInit[monthKey]) {
-//         carryForwardMapInit[monthKey].forEach((exp) => {
-//           if (!pendingExpenses.some((p) => p.auto_id === exp.auto_id)) {
-//             pendingExpenses.push(exp);
-//           }
-//         });
-//       }
-
-//       // --- Actual Income ---
-//       const actualIncomeItems = (actualReceivedByMonth[monthKey] || []).map((inv) => ({
-//         invoice_id: inv.id,
-//         invoice_number: inv.invoice_number,
-//         project_id: inv.project_id,
-//         invoice_value: Number(inv.invoice_value || 0),
-//         gst_amount: Number(inv.gst_amount || 0),
-//         total_with_gst: Number(inv.invoice_value || 0),
-//         received_date: inv.received_date,
-//       }));
-
-//       const actualIncomeTotal = actualIncomeItems.reduce((sum, it) => sum + it.total_with_gst, 0);
-
-//       // --- Forecast Income ---
-//       const forecastIncomeItems = [];
-
-//       // 1) Invoice overrides (due-date invoices)
-//       (invoicesByDueMonth[monthKey] || []).forEach((inv) => {
-//         forecastIncomeItems.push({
-//           invoice_id: inv.id,
-//           invoice_number: inv.invoice_number,
-//           project_id: inv.project_id,
-//           invoice_value: Number(inv.invoice_value || 0),
-//           gst_amount: Number(inv.gst_amount || 0),
-//           due_date: inv.due_date,
-//           project: projectMap[inv.project_id] || null,
-//           note: "invoice override",
-//         });
-//       });
-
-//       // 2) Project-based forecast
-//       projects.forEach((p) => {
-//         if (!p.startDate) return;
-
-//         const startMonth = p.startDate.slice(0, 7);
-//         const endMonth = p.endDate?.slice(0, 7);
-
-//         if (monthKey < startMonth) return;
-//         if (endMonth && monthKey > endMonth) return;
-
-//         const cycle = (p.invoiceCycle || "Monthly").toLowerCase();
-
-//         if (cycle === "quarterly") {
-//           const [sy, sm] = startMonth.split("-").map(Number);
-//           const [cy, cm] = monthKey.split("-").map(Number);
-//           const diff = (cy - sy) * 12 + (cm - sm);
-//           if (diff % 3 !== 0) return;
-//         }
-
-//         // Skip if an explicit invoice exists for this project/month
-//         const invoiceExists = (invoicesByDueMonth[monthKey] || []).some(
-//           (inv) => inv.project_id === p.projectID
-//         );
-//         if (invoiceExists) return;
-
-//         forecastIncomeItems.push({
-//           project_id: p.projectID,
-//           projectName: p.projectName,
-//           amount: Number(p.netPayable || 0),
-//           note: "project forecast",
-//         });
-//       });
-
-//       const forecastIncomeTotal = forecastIncomeItems.reduce(
-//         (sum, it) => sum + Number(it.invoice_value || it.amount || 0),
-//         0
-//       );
-
-//       // --- Actual Expenses ---
-//       const actualExpenseItems = (paidExpensesByMonth[monthKey] || []).map((ep) => ({
-//         expense_id: ep.expense_id,
-//         expense_type: ep.expense_type,
-//         description: ep.expense_description,
-//         amount: Number(ep.paid_amount || ep.actual_amount || 0),
-//         paid_date: ep.paid_date,
-//       }));
-
-//       const actualExpenseTotal = actualExpenseItems.reduce((sum, it) => sum + Number(it.amount || 0), 0);
-
-//       // --- Forecast Expenses (with duplicate prevention) ---
-//       const forecastExpenseItems = [];
-//       const monthAddedExpenseIds = new Set();
-
-//       // A) Regular expenses (recurring) - add per month if started
-//       regularExpenses.forEach((exp) => {
-//         const start = exp.raised_date?.slice(0, 7);
-//         if (start && start <= monthKey) {
-//           if (!monthAddedExpenseIds.has(exp.auto_id)) {
-//             monthAddedExpenseIds.add(exp.auto_id);
-//             forecastExpenseItems.push({
-//               expense_id: exp.auto_id,
-//               type: exp.type,
-//               description: exp.description,
-//               amount: Number(exp.amount || 0),
-//               due_date: exp.due_date,
-//               regular: exp.regular,
-//             });
-//           }
-//         }
-//       });
-
-//       // B) Carry-forward (pending) - unpaid one-time that became pending earlier
-//       if (pendingExpenses.length) {
-//         pendingExpenses.forEach((exp) => {
-//           if (!monthAddedExpenseIds.has(exp.auto_id)) {
-//             monthAddedExpenseIds.add(exp.auto_id);
-//             forecastExpenseItems.push({
-//               expense_id: exp.auto_id,
-//               type: exp.type,
-//               description: exp.description,
-//               amount: Number(exp.amount || 0),
-//               due_date: exp.due_date,
-//               note: "carry-forward",
-//             });
-//           }
-//         });
-//       }
-
-//       // C) One-time new unpaid due in this month
-//       oneTimeExpenses.forEach((exp) => {
-//         const r = exp.raised_date?.slice(0, 7);
-//         const d = exp.due_date?.slice(0, 7);
-//         // check paid status from expense_payments (paid entries)
-//         const isPaid = expensePayments.some((p) => p.expense_id === exp.auto_id);
-
-//         if (!isPaid && (r === monthKey || d === monthKey)) {
-//           if (!monthAddedExpenseIds.has(exp.auto_id)) {
-//             monthAddedExpenseIds.add(exp.auto_id);
-//             forecastExpenseItems.push({
-//               expense_id: exp.auto_id,
-//               type: exp.type,
-//               description: exp.description,
-//               amount: Number(exp.amount || 0),
-//               due_date: exp.due_date,
-//             });
-//           }
-//         }
-//       });
-
-//       const forecastExpenseTotal = forecastExpenseItems.reduce(
-//         (sum, it) => sum + Number(it.amount || 0),
-//         0
-//       );
-
-//       // --- Net Cash (you used forecastIncome - forecastExpense earlier; preserve logic)
-//       const monthlyBalance = forecastIncomeTotal - forecastExpenseTotal;
-
-//       // Build breakdowns (dedup-safe because we used monthAddedExpenseIds)
-//       const expenseBreakdown = {};
-//       [...actualExpenseItems, ...forecastExpenseItems].forEach((it) => {
-//         const key = it.type || it.expense_type || "Other";
-//         expenseBreakdown[key] = (expenseBreakdown[key] || 0) + Number(it.amount || 0);
-//       });
-
-//       const incomeBreakdown = {};
-//       [...actualIncomeItems, ...forecastIncomeItems].forEach((it) => {
-//         const key =
-//           it.projectName || (it.project && it.project.projectName) || it.project_id || "Other";
-//         const amt = Number(it.total_with_gst || it.invoice_value || it.amount || 0);
-//         incomeBreakdown[key] = (incomeBreakdown[key] || 0) + amt;
-//       });
-
-//       months.push({
-//         month: monthKey,
-//         actualIncomeTotal,
-//         actualIncomeItems,
-//         forecastIncomeTotal,
-//         forecastIncomeItems,
-//         actualExpenseTotal,
-//         actualExpenseItems,
-//         forecastExpenseTotal,
-//         forecastExpenseItems,
-//         monthlyBalance,
-//         incomeBreakdown,
-//         expenseBreakdown,
-//       });
-
-//       // Remove pending expenses that have become paid in this month (cleanup)
-//       pendingExpenses = pendingExpenses.filter(
-//         (exp) => !expensePayments.some((p) => p.expense_id === exp.auto_id)
-//       );
-//     } // end month loop
-
-//     return res.json({
-//       success: true,
-//       message: "Forecast generated successfully (schema-adapted)",
-//       startMonth: monthKeys[0],
-//       endMonth: monthKeys[monthKeys.length - 1],
-//       months,
-//       raw: {
-//         projects,
-//         invoices,
-//         actualReceivedInvoices,
-//         allExpenses,
-//         expensePayments,
-//       },
-//     });
-//   } catch (err) {
-//     console.error("❌ Forecast Error:", err);
-//     return res.status(500).json({ success: false, message: err.message, months: [] });
-//   }
-// });
-
-
-
-
-// Getting monthly last balance for forecasting
-
-
-// FULL UPDATED /forecast API (fixed paid-month detection & carry-forward)
-// FULL UPDATED /forecast (fixed ym scoping + strict per-month paid detection)
-// Paste/replace into server.js
 app.get("/forecast", async (req, res) => {
   try {
     const db = req.app.locals.db;
@@ -3598,324 +3180,363 @@ app.get("/forecast", async (req, res) => {
         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
       );
 
-    // ---------- helpers ----------
+    const today = new Date();
+
+    // generate months from startYear-01 to endYear-12 (2 years ahead by default)
+    const startYear = today.getFullYear();
+    const endYear = today.getFullYear() + 2;
+
     const generateMonthRange = (start, end) => {
+      // start/end in "YYYY-MM"
       const result = [];
       const [sy, sm] = start.split("-").map(Number);
       const [ey, em] = end.split("-").map(Number);
-      let y = sy, m = sm;
+
+      let y = sy;
+      let m = sm;
       while (y < ey || (y === ey && m <= em)) {
         result.push(`${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`);
         m++;
-        if (m === 13) { m = 1; y++; }
+        if (m === 13) {
+          m = 1;
+          y++;
+        }
       }
       return result;
     };
 
-    const monthsBetweenInclusive = (startYM, endYM) => {
-      if (!startYM || !endYM) return [];
-      return generateMonthRange(startYM, endYM);
-    };
-
-    const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
-    const buildEffectiveDueDate = (ym, day) => {
-      const [yStr, mStr] = ym.split("-");
-      const y = Number(yStr);
-      const m = Number(mStr);
-      const last = daysInMonth(y, m);
-      const d = Math.min(Math.max(Number(day) || 1, 1), last);
-      return `${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    };
-
-    const parseTypeWithEmployee = (typeStr) => {
-      if (!typeStr || typeof typeStr !== "string") return { baseType: typeStr || "", employeeName: null, employeeCode: null };
-      const parts = typeStr.split(" - ");
-      const baseType = parts[0]?.trim() || "";
-      const rest = parts.slice(1).join(" - ").trim();
-      let employeeName = null, employeeCode = null;
-      if (rest) {
-        const m = rest.match(/^(.*)\s*\(([^)]+)\)\s*$/);
-        if (m) {
-          employeeName = m[1].trim();
-          employeeCode = m[2].trim();
-        } else {
-          employeeName = rest;
-        }
-      }
-      return { baseType, employeeName, employeeCode };
-    };
-
-    const normalizeEmpCode = (c) => (c ? String(c).replace(/\s+/g, "").toUpperCase() : null);
-    const isRegularYes = (exp) => String(exp.regular || "").trim().toLowerCase() === "yes";
-    const isSalaryType = (typeStr) => {
-      if (!typeStr) return false;
-      const t = String(typeStr).toLowerCase();
-      return t.startsWith("salary") || /\bsalary\b/.test(t);
-    };
-
-    // ---------- month range ----------
-    const today = new Date();
-    const startYear = today.getFullYear();
-    const endYear = today.getFullYear() + 2;
     const monthKeys = generateMonthRange(`${startYear}-01`, `${endYear}-12`);
+    const startMonthDate = monthKeys[0] + "-01";
+    const endMonthDate = monthKeys[monthKeys.length - 1] + "-31";
 
-    // ---------- fetch data ----------
+    // -------------------------
+    // Raw data queries
+    // -------------------------
     const projects = await runQuery(
       `SELECT projectID, projectName, startDate, endDate, netPayable, invoiceCycle, active FROM Projects`
     );
 
     const invoices = await runQuery(
-      `SELECT id, invoice_number, project_id, invoice_value, gst_amount, due_date, received, received_date
-       FROM invoices`
+      `SELECT id, invoice_number, project_id, invoice_value, gst_amount, due_date, received
+       FROM invoices
+       WHERE due_date IS NOT NULL
+         AND date(due_date) BETWEEN date(?) AND date(?)`,
+      [startMonthDate, endMonthDate]
     );
 
+    const actualReceivedInvoices = await runQuery(
+      `SELECT id, invoice_number, project_id, invoice_value, gst_amount, received_date
+       FROM invoices
+       WHERE received = 'Yes'
+         AND received_date IS NOT NULL
+         AND date(received_date) BETWEEN date(?) AND date(?)`,
+      [startMonthDate, endMonthDate]
+    );
+
+    // expenses table (matches your schema)
     const allExpenses = await runQuery(
       `SELECT auto_id, regular, type, description, amount, raised_date, due_date, paid_date, paid_amount, status
-       FROM expenses`
+       FROM expenses
+       WHERE raised_date IS NOT NULL`
     );
 
+    // expense_payments table (matches your schema). Join to get expense type/description for convenience.
     const expensePayments = await runQuery(
-      `SELECT id, expense_id, month_year, actual_amount, paid_amount, paid_date, status, due_date
-       FROM expense_payments`
+      `SELECT ep.id, ep.expense_id, ep.month_year, ep.actual_amount, ep.paid_amount, ep.paid_date, ep.status,
+              e.type AS expense_type, e.description AS expense_description
+       FROM expense_payments ep
+       LEFT JOIN expenses e ON e.auto_id = ep.expense_id
+       WHERE ep.status = 'Paid'
+         AND ep.paid_date BETWEEN date(?) AND date(?)`,
+      [startMonthDate, endMonthDate]
     );
 
-    const salaryPayments = await runQuery(
-      `SELECT id, employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay, paid_date, due_date
-       FROM monthly_salary_payments`
-    );
 
-    // ---------- build indexes ----------
+    // -------------------------
+    // Helper maps
+    // -------------------------
     const invoicesByDueMonth = {};
-    invoices.forEach(inv => {
-      const m = inv.due_date?.slice(0,7);
-      if (m) (invoicesByDueMonth[m] ||= []).push(inv);
+    invoices.forEach((inv) => {
+      const month = inv.due_date?.slice(0, 7);
+      if (!month) return;
+      (invoicesByDueMonth[month] ||= []).push(inv);
     });
 
     const actualReceivedByMonth = {};
-    invoices.forEach(inv => {
-      if (inv.received === "Yes" && inv.received_date) {
-        const m = inv.received_date.slice(0,7);
-        if (m) (actualReceivedByMonth[m] ||= []).push(inv);
-      }
+    actualReceivedInvoices.forEach((inv) => {
+      const month = inv.received_date?.slice(0, 7);
+      if (!month) return;
+      (actualReceivedByMonth[month] ||= []).push(inv);
     });
 
     const paidExpensesByMonth = {};
-    expensePayments.forEach(p => {
-      const m = p.paid_date?.slice(0,7) || (p.month_year ? p.month_year.slice(0,7) : null);
-      if (m) (paidExpensesByMonth[m] ||= []).push(p);
+    expensePayments.forEach((ep) => {
+      // use paid_date if available; fallback to month_year column if paid_date not present
+      const month = ep.paid_date ? ep.paid_date.slice(0, 7) : (ep.month_year || "").slice(0, 7);
+      if (!month) return;
+      (paidExpensesByMonth[month] ||= []).push(ep);
     });
 
-    const paymentsByExpenseId = {};
-    expensePayments.forEach(raw => {
-      const p = {
-        ...raw,
-        paid_amount: raw.paid_amount != null ? Number(raw.paid_amount) : (raw.actual_amount != null ? Number(raw.actual_amount) : null)
-      };
-      (paymentsByExpenseId[p.expense_id] ||= []).push(p);
-    });
+    const projectMap = {};
+    projects.forEach((p) => (projectMap[p.projectID] = p));
 
-    // salaryMap by normalized employee code -> { month: record }
-    const salaryMap = {};
-    salaryPayments.forEach(sp => {
-      const emp = normalizeEmpCode(sp.employee_id);
-      if (!emp) return;
-      salaryMap[emp] ||= {};
-      salaryMap[emp][sp.month] = {
-        id: sp.id,
-        employee_name: sp.employee_name,
-        paid: String(sp.paid || "No"),
-        month: sp.month,
-        lop: sp.lop != null ? Number(sp.lop) : 0,
-        paid_amount: sp.paid_amount != null ? Number(sp.paid_amount) : 0,
-        actual_to_pay: sp.actual_to_pay != null ? Number(sp.actual_to_pay) : 0,
-        paid_date: sp.paid_date || null,
-        due_date: sp.due_date || null,
-      };
-    });
-
-    const getLatestExpensePayment = (expenseId) => {
-      const list = paymentsByExpenseId[expenseId] || [];
-      if (!list.length) return null;
-      const paid = list.find(p => String(p.status || "").toLowerCase() === "paid");
-      if (paid) return paid;
-      return [...list].sort((a,b) => {
-        const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
-        const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
-        return db - da;
-      })[0] || null;
+    // -------------------------
+    // Normalize regular flag
+    // -------------------------
+    const normalizeRegular = (val) => {
+      if (val === null || val === undefined) return "no";
+      // Accept 'Yes'/'No' or truthy values; normalize to 'yes' or 'no'
+      const s = String(val).trim().toLowerCase();
+      if (s === "yes" || s === "y" || s === "true" || s === "1") return "yes";
+      return "no";
     };
 
-    // ---------- build months array ----------
+    const regularExpenses = allExpenses.filter((e) => normalizeRegular(e.regular) === "yes");
+    // const oneTimeExpenses = allExpenses.filter((e) => normalizeRegular(e.regular) === "no");
+
+const paidExpenseIds = new Set(expensePayments.map((p) => p.expense_id));
+
+const carryForwardMapInit = {};
+ 
+// Only for REGULAR = "No"
+
+const oneTimeExpenses = allExpenses.filter(exp => exp.regular === "No");
+ 
+oneTimeExpenses.forEach((exp) => {
+
+  const raisedMonth = exp.raised_date?.slice(0, 7);
+
+  const dueMonth = exp.due_date?.slice(0, 7) || raisedMonth;
+ 
+  // IF PAID → SHOW IN PAID MONTH WITH PAID AMOUNT
+
+  if (paidExpenseIds.has(exp.auto_id)) {
+
+    const payment = expensePayments.find(p => p.expense_id === exp.auto_id);
+
+    const paidMonth = payment.paid_date?.slice(0, 7);
+ 
+    if (paidMonth) {
+
+      (carryForwardMapInit[paidMonth] ||= []).push({
+
+        ...exp,
+
+        status: "Paid",
+
+        paid_amount: payment.paid_amount,   // <-- PAID AMOUNT HERE
+
+        actual_amount: payment.actual_amount,
+
+        paid_date: payment.paid_date,
+
+        month_year: payment.month_year
+
+      });
+
+    }
+ 
+    return; // PAID → STOP (don't carry forward)
+
+  }
+ 
+  // IF NOT PAID → CARRY FORWARD TO DUE MONTH
+
+  const start = dueMonth || raisedMonth;
+
+  if (start) {
+
+    (carryForwardMapInit[start] ||= []).push({
+
+      ...exp,
+
+      status: "Unpaid",
+
+      paid_amount: 0,     // unpaid → no paid amount
+
+    });
+
+  }
+
+});
+
+    // -------------------------
+    // Build month-wise forecast
+    // -------------------------
     const months = [];
+    let pendingExpenses = [];
 
     for (const monthKey of monthKeys) {
-      const forecastExpenseItems = [];
-
-      // 1) Regular expenses (carry forward per-month)
-      const regularExpenses = allExpenses.filter(e => isRegularYes(e));
-
-      regularExpenses.forEach(exp => {
-        const parsed = parseTypeWithEmployee(exp.type);
-        const baseType = parsed.baseType || "";
-        const empCodeRaw = parsed.employeeCode || null;
-        const empCode = normalizeEmpCode(empCodeRaw);
-
-        const startMonth = (exp.raised_date && exp.raised_date.slice(0,7)) || (exp.due_date && exp.due_date.slice(0,7));
-        if (!startMonth) return;
-        if (startMonth > monthKey) return;
-
-        const originalDate = exp.due_date || exp.raised_date || (startMonth + "-01");
-        const originalDay = (originalDate && originalDate.split("-")[2]) ? Number(originalDate.split("-")[2]) : 1;
-
-        const monthsToCheck = monthsBetweenInclusive(startMonth, monthKey);
-
-        // For each carried month `ym` we check if that exact ym is paid
-        monthsToCheck.forEach((ym) => {
-          let paidThisMonth = false;
-
-          if (isSalaryType(exp.type) && empCode) {
-            const empMonths = salaryMap[empCode] || {};
-            if (Object.prototype.hasOwnProperty.call(empMonths, ym)) {
-              paidThisMonth = String(empMonths[ym].paid || "").toLowerCase() === "yes";
-            } else {
-              paidThisMonth = false;
-            }
-          } else {
-            const payments = paymentsByExpenseId[exp.auto_id] || [];
-            // strict match on month_year
-            paidThisMonth = payments.some(p => String(p.status || "").toLowerCase() === "paid" && p.month_year === ym);
+      // bring forward carry-forward items into pending (avoid duplicates)
+      if (carryForwardMapInit[monthKey]) {
+        carryForwardMapInit[monthKey].forEach((exp) => {
+          if (!pendingExpenses.some((p) => p.auto_id === exp.auto_id)) {
+            pendingExpenses.push(exp);
           }
+        });
+      }
 
-          if (!paidThisMonth) {
-            const effectiveDue = buildEffectiveDueDate(ym, originalDay);
-            forecastExpenseItems.push({
-              expense_id: exp.auto_id,
-              type: exp.type,
-              description: exp.description,
-              baseType,
-              employeeName: parsed.employeeName || null,
-              employeeCode: empCode || null,
-              amount: Number(exp.amount || 0),
-              regular: "Yes",
-              original_due_date: exp.due_date || null,
-              effective_due_date: effectiveDue,
-              due_date: effectiveDue,
-              carry_for_month: ym,
-              paid_amount: 0,
-              paid_date: null,
-              status: "Unpaid",
-              _source: "regular-carryforward",
-            });
-          }
+      // --- Actual Income ---
+      const actualIncomeItems = (actualReceivedByMonth[monthKey] || []).map((inv) => ({
+        invoice_id: inv.id,
+        invoice_number: inv.invoice_number,
+        project_id: inv.project_id,
+        invoice_value: Number(inv.invoice_value || 0),
+        gst_amount: Number(inv.gst_amount || 0),
+        total_with_gst: Number(inv.invoice_value || 0),
+        received_date: inv.received_date,
+      }));
+
+      const actualIncomeTotal = actualIncomeItems.reduce((sum, it) => sum + it.total_with_gst, 0);
+
+      // --- Forecast Income ---
+      const forecastIncomeItems = [];
+
+      // 1) Invoice overrides (due-date invoices)
+      (invoicesByDueMonth[monthKey] || []).forEach((inv) => {
+        forecastIncomeItems.push({
+          invoice_id: inv.id,
+          invoice_number: inv.invoice_number,
+          project_id: inv.project_id,
+          invoice_value: Number(inv.invoice_value || 0),
+          gst_amount: Number(inv.gst_amount || 0),
+          due_date: inv.due_date,
+          project: projectMap[inv.project_id] || null,
+          note: "invoice override",
         });
       });
 
-      // 2) One-time unpaid items where dueMonth <= monthKey
-      const oneTimeExpenses = allExpenses.filter(e => !isRegularYes(e));
-      oneTimeExpenses.forEach(exp => {
-        const dueMonth = (exp.due_date && exp.due_date.slice(0,7)) || (exp.raised_date && exp.raised_date.slice(0,7));
-        if (!dueMonth) return;
-        if (dueMonth > monthKey) return;
+      // 2) Project-based forecast
+      projects.forEach((p) => {
+        if (!p.startDate) return;
 
-        const latest = getLatestExpensePayment(exp.auto_id);
-        const isPaid = latest && String(latest.status || "").toLowerCase() === "paid";
+        const startMonth = p.startDate.slice(0, 7);
+        const endMonth = p.endDate?.slice(0, 7);
 
-        if (!isPaid) {
-          const originalDate = exp.due_date || exp.raised_date || (dueMonth + "-01");
-          const originalDay = (originalDate && originalDate.split("-")[2]) ? Number(originalDate.split("-")[2]) : 1;
-          const effectiveDue = buildEffectiveDueDate(monthKey, originalDay);
-          forecastExpenseItems.push({
-            expense_id: exp.auto_id,
-            type: exp.type,
-            description: exp.description,
-            amount: Number(exp.amount || 0),
-            regular: "No",
-            original_due_date: exp.due_date || null,
-            effective_due_date: effectiveDue,
-            due_date: effectiveDue,
-            paid_amount: latest ? Number(latest.paid_amount || latest.actual_amount || 0) : 0,
-            paid_date: latest ? (latest.paid_date || null) : null,
-            status: latest ? latest.status : "Unpaid",
-            _source: "one-time-carry",
-          });
-        }
-      });
-
-      // 3) Actual expense payments for this outer monthKey (show paid ones)
-      const actualExpenseItems = (paidExpensesByMonth[monthKey] || []).map(ep => {
-        const paidAmount = ep.paid_amount != null ? Number(ep.paid_amount) : (ep.actual_amount != null ? Number(ep.actual_amount) : 0);
-        const expenseRow = allExpenses.find(e => e.auto_id === ep.expense_id) || null;
-        const dueFromExpense = expenseRow ? expenseRow.due_date : (ep.due_date || null);
-        return {
-          expense_id: ep.expense_id,
-          expense_type: expenseRow ? expenseRow.type : null,
-          description: expenseRow ? expenseRow.description : ep.description || null,
-          amount: paidAmount,
-          paid_amount: paidAmount,
-          actual_amount: ep.actual_amount != null ? Number(ep.actual_amount) : null,
-          due_date: dueFromExpense || null,
-          paid_date: ep.paid_date || null,
-          regular: expenseRow ? String(expenseRow.regular || "No") : "No",
-          status: ep.status || "Paid",
-          _source: "actual-expense-payment",
-        };
-      });
-
-      const actualExpenseTotal = actualExpenseItems.reduce((s,a) => s + (a.amount || 0), 0);
-      const forecastExpenseTotal = forecastExpenseItems.reduce((s,a) => s + (Number(a.paid_amount || a.amount || 0)), 0);
-
-      // Income sections (unchanged)
-      const actualIncomeItems = (actualReceivedByMonth[monthKey] || []).map(inv => ({
-        invoice_id: inv.id,
-        invoice_number: inv.invoice_number,
-        project_id: inv.project_id,
-        invoice_value: Number(inv.invoice_value || 0),
-        total_with_gst: Number(inv.invoice_value || 0),
-        gst_amount: Number(inv.gst_amount || 0),
-        received_date: inv.received_date || null,
-        _source: "actual-income",
-      }));
-      const actualIncomeTotal = actualIncomeItems.reduce((s,a) => s + (a.total_with_gst || 0), 0);
-
-      const forecastIncomeItems = (invoicesByDueMonth[monthKey] || []).map(inv => ({
-        invoice_id: inv.id,
-        invoice_number: inv.invoice_number,
-        project_id: inv.project_id,
-        invoice_value: Number(inv.invoice_value || 0),
-        total_with_gst: Number(inv.invoice_value || 0),
-        gst_amount: Number(inv.gst_amount || 0),
-        due_date: inv.due_date || null,
-        _source: "forecast-invoice",
-      }));
-
-      // project-based forecast
-      projects.forEach(p => {
-        const netPayable = Number(p.netPayable || p.net_payable || 0);
-        if (!netPayable || netPayable <= 0) return;
-        const startMonth = p.startDate ? String(p.startDate).slice(0,7) : null;
-        const endMonth = p.endDate ? String(p.endDate).slice(0,7) : null;
-        if (startMonth && monthKey < startMonth) return;
+        if (monthKey < startMonth) return;
         if (endMonth && monthKey > endMonth) return;
-        const cycle = String(p.invoiceCycle || "Monthly").toLowerCase();
-        if (cycle === "quarterly" && startMonth) {
+
+        const cycle = (p.invoiceCycle || "Monthly").toLowerCase();
+
+        if (cycle === "quarterly") {
           const [sy, sm] = startMonth.split("-").map(Number);
           const [cy, cm] = monthKey.split("-").map(Number);
           const diff = (cy - sy) * 12 + (cm - sm);
           if (diff % 3 !== 0) return;
         }
-        const invoiceExists = (invoicesByDueMonth[monthKey] || []).some(inv => inv.project_id === p.projectID);
+
+        // Skip if an explicit invoice exists for this project/month
+        const invoiceExists = (invoicesByDueMonth[monthKey] || []).some(
+          (inv) => inv.project_id === p.projectID
+        );
         if (invoiceExists) return;
+
         forecastIncomeItems.push({
           project_id: p.projectID,
           projectName: p.projectName,
-          invoice_value: netPayable,
-          total_with_gst: netPayable,
-          gst_amount: 0,
-          _source: "project-forecast",
+          amount: Number(p.netPayable || 0),
+          note: "project forecast",
         });
       });
 
-      const forecastIncomeTotal = forecastIncomeItems.reduce((s,a) => s + (Number(a.total_with_gst || a.invoice_value || 0)), 0);
+      const forecastIncomeTotal = forecastIncomeItems.reduce(
+        (sum, it) => sum + Number(it.invoice_value || it.amount || 0),
+        0
+      );
+
+      // --- Actual Expenses ---
+      const actualExpenseItems = (paidExpensesByMonth[monthKey] || []).map((ep) => ({
+        expense_id: ep.expense_id,
+        expense_type: ep.expense_type,
+        description: ep.expense_description,
+        amount: Number(ep.paid_amount || ep.actual_amount || 0),
+        paid_date: ep.paid_date,
+      }));
+
+      const actualExpenseTotal = actualExpenseItems.reduce((sum, it) => sum + Number(it.amount || 0), 0);
+
+      // --- Forecast Expenses (with duplicate prevention) ---
+      const forecastExpenseItems = [];
+      const monthAddedExpenseIds = new Set();
+
+      // A) Regular expenses (recurring) - add per month if started
+      regularExpenses.forEach((exp) => {
+        const start = exp.raised_date?.slice(0, 7);
+        if (start && start <= monthKey) {
+          if (!monthAddedExpenseIds.has(exp.auto_id)) {
+            monthAddedExpenseIds.add(exp.auto_id);
+            forecastExpenseItems.push({
+              expense_id: exp.auto_id,
+              type: exp.type,
+              description: exp.description,
+              amount: Number(exp.amount || 0),
+              due_date: exp.due_date,
+              regular: exp.regular,
+            });
+          }
+        }
+      });
+
+      // B) Carry-forward (pending) - unpaid one-time that became pending earlier
+      if (pendingExpenses.length) {
+        pendingExpenses.forEach((exp) => {
+          if (!monthAddedExpenseIds.has(exp.auto_id)) {
+            monthAddedExpenseIds.add(exp.auto_id);
+            forecastExpenseItems.push({
+              expense_id: exp.auto_id,
+              type: exp.type,
+              description: exp.description,
+              amount: Number(exp.amount || 0),
+              due_date: exp.due_date,
+              note: "carry-forward",
+            });
+          }
+        });
+      }
+
+      // C) One-time new unpaid due in this month
+      oneTimeExpenses.forEach((exp) => {
+        const r = exp.raised_date?.slice(0, 7);
+        const d = exp.due_date?.slice(0, 7);
+        // check paid status from expense_payments (paid entries)
+        const isPaid = expensePayments.some((p) => p.expense_id === exp.auto_id);
+
+        if (!isPaid && (r === monthKey || d === monthKey)) {
+          if (!monthAddedExpenseIds.has(exp.auto_id)) {
+            monthAddedExpenseIds.add(exp.auto_id);
+            forecastExpenseItems.push({
+              expense_id: exp.auto_id,
+              type: exp.type,
+              description: exp.description,
+              amount: Number(exp.amount || 0),
+              due_date: exp.due_date,
+            });
+          }
+        }
+      });
+
+      const forecastExpenseTotal = forecastExpenseItems.reduce(
+        (sum, it) => sum + Number(it.amount || 0),
+        0
+      );
+
+      // --- Net Cash (you used forecastIncome - forecastExpense earlier; preserve logic)
+      const monthlyBalance = forecastIncomeTotal - forecastExpenseTotal;
+
+      // Build breakdowns (dedup-safe because we used monthAddedExpenseIds)
+      const expenseBreakdown = {};
+      [...actualExpenseItems, ...forecastExpenseItems].forEach((it) => {
+        const key = it.type || it.expense_type || "Other";
+        expenseBreakdown[key] = (expenseBreakdown[key] || 0) + Number(it.amount || 0);
+      });
+
+      const incomeBreakdown = {};
+      [...actualIncomeItems, ...forecastIncomeItems].forEach((it) => {
+        const key =
+          it.projectName || (it.project && it.project.projectName) || it.project_id || "Other";
+        const amt = Number(it.total_with_gst || it.invoice_value || it.amount || 0);
+        incomeBreakdown[key] = (incomeBreakdown[key] || 0) + amt;
+      });
 
       months.push({
         month: monthKey,
@@ -3927,21 +3548,401 @@ app.get("/forecast", async (req, res) => {
         actualExpenseItems,
         forecastExpenseTotal,
         forecastExpenseItems,
-        monthlyBalance: forecastIncomeTotal - forecastExpenseTotal,
+        monthlyBalance,
+        incomeBreakdown,
+        expenseBreakdown,
       });
-    } // end months loop
-      
+
+      // Remove pending expenses that have become paid in this month (cleanup)
+      pendingExpenses = pendingExpenses.filter(
+        (exp) => !expensePayments.some((p) => p.expense_id === exp.auto_id)
+      );
+    } // end month loop
+
     return res.json({
       success: true,
-      message: "Forecast generated (fixed ym scoping + strict per-month paid detection)",
+      message: "Forecast generated successfully (schema-adapted)",
+      startMonth: monthKeys[0],
+      endMonth: monthKeys[monthKeys.length - 1],
       months,
+      raw: {
+        projects,
+        invoices,
+        actualReceivedInvoices,
+        allExpenses,
+        expensePayments,
+      },
     });
-   
   } catch (err) {
     console.error("❌ Forecast Error:", err);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message, months: [] });
   }
 });
+
+
+
+
+// Getting monthly last balance for forecasting
+
+
+// FULL UPDATED /forecast API (fixed paid-month detection & carry-forward)
+// FULL UPDATED /forecast (fixed ym scoping + strict per-month paid detection)
+// Paste/replace into server.js
+
+// app.get("/forecast", async (req, res) => {
+//   try {
+//     const db = req.app.locals.db;
+//     if (!db) throw new Error("Database not initialized");
+
+//     const runQuery = (sql, params = []) =>
+//       new Promise((resolve, reject) =>
+//         db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
+//       );
+
+//     // ---------- helpers ----------
+//     const generateMonthRange = (start, end) => {
+//       const result = [];
+//       const [sy, sm] = start.split("-").map(Number);
+//       const [ey, em] = end.split("-").map(Number);
+//       let y = sy, m = sm;
+//       while (y < ey || (y === ey && m <= em)) {
+//         result.push(`${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}`);
+//         m++;
+//         if (m === 13) { m = 1; y++; }
+//       }
+//       return result;
+//     };
+
+//     const monthsBetweenInclusive = (startYM, endYM) => {
+//       if (!startYM || !endYM) return [];
+//       return generateMonthRange(startYM, endYM);
+//     };
+
+//     const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
+//     const buildEffectiveDueDate = (ym, day) => {
+//       const [yStr, mStr] = ym.split("-");
+//       const y = Number(yStr);
+//       const m = Number(mStr);
+//       const last = daysInMonth(y, m);
+//       const d = Math.min(Math.max(Number(day) || 1, 1), last);
+//       return `${String(y).padStart(4,"0")}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+//     };
+
+//     const parseTypeWithEmployee = (typeStr) => {
+//       if (!typeStr || typeof typeStr !== "string") return { baseType: typeStr || "", employeeName: null, employeeCode: null };
+//       const parts = typeStr.split(" - ");
+//       const baseType = parts[0]?.trim() || "";
+//       const rest = parts.slice(1).join(" - ").trim();
+//       let employeeName = null, employeeCode = null;
+//       if (rest) {
+//         const m = rest.match(/^(.*)\s*\(([^)]+)\)\s*$/);
+//         if (m) {
+//           employeeName = m[1].trim();
+//           employeeCode = m[2].trim();
+//         } else {
+//           employeeName = rest;
+//         }
+//       }
+//       return { baseType, employeeName, employeeCode };
+//     };
+
+//     const normalizeEmpCode = (c) => (c ? String(c).replace(/\s+/g, "").toUpperCase() : null);
+//     const isRegularYes = (exp) => String(exp.regular || "").trim().toLowerCase() === "yes";
+//     const isSalaryType = (typeStr) => {
+//       if (!typeStr) return false;
+//       const t = String(typeStr).toLowerCase();
+//       return t.startsWith("salary") || /\bsalary\b/.test(t);
+//     };
+
+//     // ---------- month range ----------
+//     const today = new Date();
+//     const startYear = today.getFullYear();
+//     const endYear = today.getFullYear() + 2;
+//     const monthKeys = generateMonthRange(`${startYear}-01`, `${endYear}-12`);
+
+//     // ---------- fetch data ----------
+//     const projects = await runQuery(
+//       `SELECT projectID, projectName, startDate, endDate, netPayable, invoiceCycle, active FROM Projects`
+//     );
+
+//     const invoices = await runQuery(
+//       `SELECT id, invoice_number, project_id, invoice_value, gst_amount, due_date, received, received_date
+//        FROM invoices`
+//     );
+
+//     const allExpenses = await runQuery(
+//       `SELECT auto_id, regular, type, description, amount, raised_date, due_date, paid_date, paid_amount, status
+//        FROM expenses`
+//     );
+
+//     const expensePayments = await runQuery(
+//       `SELECT id, expense_id, month_year, actual_amount, paid_amount, paid_date, status, due_date
+//        FROM expense_payments`
+//     );
+
+//     const salaryPayments = await runQuery(
+//       `SELECT id, employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay, paid_date, due_date
+//        FROM monthly_salary_payments`
+//     );
+
+//     // ---------- build indexes ----------
+//     const invoicesByDueMonth = {};
+//     invoices.forEach(inv => {
+//       const m = inv.due_date?.slice(0,7);
+//       if (m) (invoicesByDueMonth[m] ||= []).push(inv);
+//     });
+
+//     const actualReceivedByMonth = {};
+//     invoices.forEach(inv => {
+//       if (inv.received === "Yes" && inv.received_date) {
+//         const m = inv.received_date.slice(0,7);
+//         if (m) (actualReceivedByMonth[m] ||= []).push(inv);
+//       }
+//     });
+
+//     const paidExpensesByMonth = {};
+//     expensePayments.forEach(p => {
+//       const m = p.paid_date?.slice(0,7) || (p.month_year ? p.month_year.slice(0,7) : null);
+//       if (m) (paidExpensesByMonth[m] ||= []).push(p);
+//     });
+
+//     const paymentsByExpenseId = {};
+//     expensePayments.forEach(raw => {
+//       const p = {
+//         ...raw,
+//         paid_amount: raw.paid_amount != null ? Number(raw.paid_amount) : (raw.actual_amount != null ? Number(raw.actual_amount) : null)
+//       };
+//       (paymentsByExpenseId[p.expense_id] ||= []).push(p);
+//     });
+
+//     // salaryMap by normalized employee code -> { month: record }
+//     const salaryMap = {};
+//     salaryPayments.forEach(sp => {
+//       const emp = normalizeEmpCode(sp.employee_id);
+//       if (!emp) return;
+//       salaryMap[emp] ||= {};
+//       salaryMap[emp][sp.month] = {
+//         id: sp.id,
+//         employee_name: sp.employee_name,
+//         paid: String(sp.paid || "No"),
+//         month: sp.month,
+//         lop: sp.lop != null ? Number(sp.lop) : 0,
+//         paid_amount: sp.paid_amount != null ? Number(sp.paid_amount) : 0,
+//         actual_to_pay: sp.actual_to_pay != null ? Number(sp.actual_to_pay) : 0,
+//         paid_date: sp.paid_date || null,
+//         due_date: sp.due_date || null,
+//       };
+//     });
+
+//     const getLatestExpensePayment = (expenseId) => {
+//       const list = paymentsByExpenseId[expenseId] || [];
+//       if (!list.length) return null;
+//       const paid = list.find(p => String(p.status || "").toLowerCase() === "paid");
+//       if (paid) return paid;
+//       return [...list].sort((a,b) => {
+//         const da = a.paid_date ? new Date(a.paid_date) : (a.month_year ? new Date(a.month_year + "-01") : new Date(0));
+//         const db = b.paid_date ? new Date(b.paid_date) : (b.month_year ? new Date(b.month_year + "-01") : new Date(0));
+//         return db - da;
+//       })[0] || null;
+//     };
+
+//     // ---------- build months array ----------
+//     const months = [];
+
+//     for (const monthKey of monthKeys) {
+//       const forecastExpenseItems = [];
+
+//       // 1) Regular expenses (carry forward per-month)
+//       const regularExpenses = allExpenses.filter(e => isRegularYes(e));
+
+//       regularExpenses.forEach(exp => {
+//         const parsed = parseTypeWithEmployee(exp.type);
+//         const baseType = parsed.baseType || "";
+//         const empCodeRaw = parsed.employeeCode || null;
+//         const empCode = normalizeEmpCode(empCodeRaw);
+
+//         const startMonth = (exp.raised_date && exp.raised_date.slice(0,7)) || (exp.due_date && exp.due_date.slice(0,7));
+//         if (!startMonth) return;
+//         if (startMonth > monthKey) return;
+
+//         const originalDate = exp.due_date || exp.raised_date || (startMonth + "-01");
+//         const originalDay = (originalDate && originalDate.split("-")[2]) ? Number(originalDate.split("-")[2]) : 1;
+
+//         const monthsToCheck = monthsBetweenInclusive(startMonth, monthKey);
+
+//         // For each carried month `ym` we check if that exact ym is paid
+//         monthsToCheck.forEach((ym) => {
+//           let paidThisMonth = false;
+
+//           if (isSalaryType(exp.type) && empCode) {
+//             const empMonths = salaryMap[empCode] || {};
+//             if (Object.prototype.hasOwnProperty.call(empMonths, ym)) {
+//               paidThisMonth = String(empMonths[ym].paid || "").toLowerCase() === "yes";
+//             } else {
+//               paidThisMonth = false;
+//             }
+//           } else {
+//             const payments = paymentsByExpenseId[exp.auto_id] || [];
+//             // strict match on month_year
+//             paidThisMonth = payments.some(p => String(p.status || "").toLowerCase() === "paid" && p.month_year === ym);
+//           }
+
+//           if (!paidThisMonth) {
+//             const effectiveDue = buildEffectiveDueDate(ym, originalDay);
+//             forecastExpenseItems.push({
+//               expense_id: exp.auto_id,
+//               type: exp.type,
+//               description: exp.description,
+//               baseType,
+//               employeeName: parsed.employeeName || null,
+//               employeeCode: empCode || null,
+//               amount: Number(exp.amount || 0),
+//               regular: "Yes",
+//               original_due_date: exp.due_date || null,
+//               effective_due_date: effectiveDue,
+//               due_date: effectiveDue,
+//               carry_for_month: ym,
+//               paid_amount: 0,
+//               paid_date: null,
+//               status: "Unpaid",
+//               _source: "regular-carryforward",
+//             });
+//           }
+//         });
+//       });
+
+//       // 2) One-time unpaid items where dueMonth <= monthKey
+//       const oneTimeExpenses = allExpenses.filter(e => !isRegularYes(e));
+//       oneTimeExpenses.forEach(exp => {
+//         const dueMonth = (exp.due_date && exp.due_date.slice(0,7)) || (exp.raised_date && exp.raised_date.slice(0,7));
+//         if (!dueMonth) return;
+//         if (dueMonth > monthKey) return;
+
+//         const latest = getLatestExpensePayment(exp.auto_id);
+//         const isPaid = latest && String(latest.status || "").toLowerCase() === "paid";
+
+//         if (!isPaid) {
+//           const originalDate = exp.due_date || exp.raised_date || (dueMonth + "-01");
+//           const originalDay = (originalDate && originalDate.split("-")[2]) ? Number(originalDate.split("-")[2]) : 1;
+//           const effectiveDue = buildEffectiveDueDate(monthKey, originalDay);
+//           forecastExpenseItems.push({
+//             expense_id: exp.auto_id,
+//             type: exp.type,
+//             description: exp.description,
+//             amount: Number(exp.amount || 0),
+//             regular: "No",
+//             original_due_date: exp.due_date || null,
+//             effective_due_date: effectiveDue,
+//             due_date: effectiveDue,
+//             paid_amount: latest ? Number(latest.paid_amount || latest.actual_amount || 0) : 0,
+//             paid_date: latest ? (latest.paid_date || null) : null,
+//             status: latest ? latest.status : "Unpaid",
+//             _source: "one-time-carry",
+//           });
+//         }
+//       });
+
+//       // 3) Actual expense payments for this outer monthKey (show paid ones)
+//       const actualExpenseItems = (paidExpensesByMonth[monthKey] || []).map(ep => {
+//         const paidAmount = ep.paid_amount != null ? Number(ep.paid_amount) : (ep.actual_amount != null ? Number(ep.actual_amount) : 0);
+//         const expenseRow = allExpenses.find(e => e.auto_id === ep.expense_id) || null;
+//         const dueFromExpense = expenseRow ? expenseRow.due_date : (ep.due_date || null);
+//         return {
+//           expense_id: ep.expense_id,
+//           expense_type: expenseRow ? expenseRow.type : null,
+//           description: expenseRow ? expenseRow.description : ep.description || null,
+//           amount: paidAmount,
+//           paid_amount: paidAmount,
+//           actual_amount: ep.actual_amount != null ? Number(ep.actual_amount) : null,
+//           due_date: dueFromExpense || null,
+//           paid_date: ep.paid_date || null,
+//           regular: expenseRow ? String(expenseRow.regular || "No") : "No",
+//           status: ep.status || "Paid",
+//           _source: "actual-expense-payment",
+//         };
+//       });
+
+//       const actualExpenseTotal = actualExpenseItems.reduce((s,a) => s + (a.amount || 0), 0);
+//       const forecastExpenseTotal = forecastExpenseItems.reduce((s,a) => s + (Number(a.paid_amount || a.amount || 0)), 0);
+
+//       // Income sections (unchanged)
+//       const actualIncomeItems = (actualReceivedByMonth[monthKey] || []).map(inv => ({
+//         invoice_id: inv.id,
+//         invoice_number: inv.invoice_number,
+//         project_id: inv.project_id,
+//         invoice_value: Number(inv.invoice_value || 0),
+//         total_with_gst: Number(inv.invoice_value || 0),
+//         gst_amount: Number(inv.gst_amount || 0),
+//         received_date: inv.received_date || null,
+//         _source: "actual-income",
+//       }));
+//       const actualIncomeTotal = actualIncomeItems.reduce((s,a) => s + (a.total_with_gst || 0), 0);
+
+//       const forecastIncomeItems = (invoicesByDueMonth[monthKey] || []).map(inv => ({
+//         invoice_id: inv.id,
+//         invoice_number: inv.invoice_number,
+//         project_id: inv.project_id,
+//         invoice_value: Number(inv.invoice_value || 0),
+//         total_with_gst: Number(inv.invoice_value || 0),
+//         gst_amount: Number(inv.gst_amount || 0),
+//         due_date: inv.due_date || null,
+//         _source: "forecast-invoice",
+//       }));
+
+//       // project-based forecast
+//       projects.forEach(p => {
+//         const netPayable = Number(p.netPayable || p.net_payable || 0);
+//         if (!netPayable || netPayable <= 0) return;
+//         const startMonth = p.startDate ? String(p.startDate).slice(0,7) : null;
+//         const endMonth = p.endDate ? String(p.endDate).slice(0,7) : null;
+//         if (startMonth && monthKey < startMonth) return;
+//         if (endMonth && monthKey > endMonth) return;
+//         const cycle = String(p.invoiceCycle || "Monthly").toLowerCase();
+//         if (cycle === "quarterly" && startMonth) {
+//           const [sy, sm] = startMonth.split("-").map(Number);
+//           const [cy, cm] = monthKey.split("-").map(Number);
+//           const diff = (cy - sy) * 12 + (cm - sm);
+//           if (diff % 3 !== 0) return;
+//         }
+//         const invoiceExists = (invoicesByDueMonth[monthKey] || []).some(inv => inv.project_id === p.projectID);
+//         if (invoiceExists) return;
+//         forecastIncomeItems.push({
+//           project_id: p.projectID,
+//           projectName: p.projectName,
+//           invoice_value: netPayable,
+//           total_with_gst: netPayable,
+//           gst_amount: 0,
+//           _source: "project-forecast",
+//         });
+//       });
+
+//       const forecastIncomeTotal = forecastIncomeItems.reduce((s,a) => s + (Number(a.total_with_gst || a.invoice_value || 0)), 0);
+
+//       months.push({
+//         month: monthKey,
+//         actualIncomeTotal,
+//         actualIncomeItems,
+//         forecastIncomeTotal,
+//         forecastIncomeItems,
+//         actualExpenseTotal,
+//         actualExpenseItems,
+//         forecastExpenseTotal,
+//         forecastExpenseItems,
+//         monthlyBalance: forecastIncomeTotal - forecastExpenseTotal,
+//       });
+//     } // end months loop
+      
+//     return res.json({
+//       success: true,
+//       message: "Forecast generated (fixed ym scoping + strict per-month paid detection)",
+//       months,
+//     });
+   
+//   } catch (err) {
+//     console.error("❌ Forecast Error:", err);
+//     return res.status(500).json({ success: false, message: err.message });
+//   }
+// });
 
 
 
