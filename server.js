@@ -1,3 +1,8 @@
+
+// app.listen(port, () => {
+//   console.log(`Server running at http://localhost:${port}`);
+// });
+
 const express = require("express");
 const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
@@ -1030,12 +1035,18 @@ app.post("/invoices", (req, res) => {
           // Step 3: Insert GST Expense Automatically
           // =====================================
 
-          const today = new Date();
-          const raisedDate = today.toISOString().split("T")[0];
+          const raisedDate = new Date(invoice_date);
 
-          // Compute due date: 20th of next month
-          const nextMonth = new Date(today.getFullYear(), today.getMonth() + 1, 20);
-          const gstDueDate = nextMonth.toISOString().split("T")[0];
+// Convert raisedDate to YYYY-MM-DD
+const formattedRaisedDate = raisedDate.toISOString().split("T")[0];
+
+// Get next month of raised date
+const nextMonth = new Date(
+  raisedDate.getFullYear(),
+  raisedDate.getMonth() + 1,
+  20
+);
+const gstDueDate = nextMonth.toISOString().split("T")[0];
 
           const expSql = `
             INSERT INTO expenses (
@@ -1055,7 +1066,7 @@ app.post("/invoices", (req, res) => {
               descriptionText,
               gst_amount,
               "INR",
-              raisedDate,
+              formattedRaisedDate,
               gstDueDate,
               null,
               null,
