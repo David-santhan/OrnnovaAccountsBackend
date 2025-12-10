@@ -234,7 +234,7 @@ db.run(`
     account_id INTEGER PRIMARY KEY AUTOINCREMENT,
     account_number TEXT UNIQUE NOT NULL,
     account_name TEXT NOT NULL,
-    account_type TEXT CHECK(account_type IN ('Capital','Current','Kitty')) NOT NULL,
+    account_type TEXT CHECK(account_type IN ('Capital','Current')) NOT NULL,
     balance REAL DEFAULT 0,
     is_hidden INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
@@ -613,192 +613,8 @@ app.get("/getallsalaries", (req, res) => {
   });
 });
 
- //add salries
-// app.post("/addsalaries", (req, res) => {
-//   const {
-//     employee_id,
-//     employee_name,
-//     month,
-//     paid,
-//     paid_date,
  
-//     basic_pay,
-//     hra,
-//     conveyance_allowance,
-//     medical_allowance,
-//     lta,
-//     personal_allowance,
-//     gross_salary,
-//     ctc,
- 
-//     professional_tax,
-//     insurance,
-//     pf,
-//     tds,
- 
-//     employer_pf,
-//     employer_health_insurance,
- 
-//     net_takehome,
-//   } = req.body;
- 
-//   // Fetch employee details first
-//   const employeeQuery = `
-//     SELECT consultant_regular, date_of_joining
-//     FROM employees
-//     WHERE employee_id = ?
-//   `;
- 
-//   db.get(employeeQuery, [employee_id], (err, employee) => {
-//     if (err || !employee) {
-//       return res.status(500).json({ error: "Employee not found" });
-//     }
- 
-//     const consultantType = employee.consultant_regular; // Consultant or Regular
-//     const joiningDate = employee.date_of_joining;       // yyyy-mm-dd
- 
-//     // Helper to get last day of month
-//     function getLastDayOfMonth(dateStr) {
-//       const [year, month] = dateStr.split("-").map(Number);
-//       const last = new Date(year, month, 0).getDate();
-//       return `${year}-${String(month).padStart(2, "0")}-${String(last).padStart(2, "0")}`;
-//     }
- 
-//     // Helper to get 7th of next month
-//     function getSeventhOfNextMonth(dateStr) {
-//       const [year, month] = dateStr.split("-").map(Number);
-//       const nextMonth = month + 1 > 12 ? 1 : month + 1;
-//       const nextYear = month + 1 > 12 ? year + 1 : year;
-//       return `${nextYear}-${String(nextMonth).padStart(2, "0")}-07`;
-//     }
- 
-//     // Compute due date for Salary based on type
-//     let salary_due_date = "";
-//     if (consultantType === "Consultant") {
-//       salary_due_date = getSeventhOfNextMonth(joiningDate);
-//     } else {
-//       salary_due_date = getLastDayOfMonth(joiningDate);
-//     }
- 
-//     // TDS / PF / PT always due on 7th of next month from joining
-//     const statutory_due_date = getSeventhOfNextMonth(joiningDate);
- 
-//     // Raised date is 1st of selected month
-//     const raised_date = `${month}-01`;
- 
-//     // INSERT salary payment
-//     const insertSalaryQuery = `
-//       INSERT INTO salary_payments (
-//         employee_id, employee_name, month, paid, paid_date,
-//         basic_pay, hra, conveyance_allowance, medical_allowance,
-//         lta, personal_allowance, gross_salary, ctc,
-//         professional_tax, insurance, pf, tds,
-//         employer_pf, employer_health_insurance, net_takehome
-//       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-//     `;
- 
-//     db.run(
-//       insertSalaryQuery,
-//       [
-//         employee_id,
-//         employee_name,
-//         month,
-//         paid || "No",
-//         paid_date || null,
-//         basic_pay || 0,
-//         hra || 0,
-//         conveyance_allowance || 0,
-//         medical_allowance || 0,
-//         lta || 0,
-//         personal_allowance || 0,
-//         gross_salary || 0,
-//         ctc || 0,
-//         professional_tax || 0,
-//         0, // INSURANCE REMOVED
-//         pf || 0,
-//         tds || 0,
-//         employer_pf || 0,
-//         employer_health_insurance || 0,
-//         net_takehome || 0,
-//       ],
-//       function (err) {
-//         if (err) {
-//           console.error("❌ Salary Insert Error:", err.message);
-//           return res.status(500).json({ error: err.message });
-//         }
- 
-//         // BUILD EXPENSES
-//         const expensesToInsert = [];
- 
-//         // 1️⃣ Salary expense (net take-home)
-//         expensesToInsert.push({
-//           type: `Salary - ${employee_name} (${employee_id})`,
-//           description: `Salary for ${month}`,
-//           amount: net_takehome || 0,
-//           due: salary_due_date,
-//         });
- 
-//         // 2️⃣ TDS expense (monthly value)
-//         if (tds > 0) {
-//           expensesToInsert.push({
-//             type: `TDS - ${employee_name} (${employee_id})`,
-//             description: `Monthly TDS Contribution (${month})`,
-//             amount: (tds / 12).toFixed(2),
-//             due: statutory_due_date,
-//           });
-//         }
- 
-//         // 3️⃣ PF
-//         if (pf > 0) {
-//           expensesToInsert.push({
-//             type: `PF - ${employee_name} (${employee_id})`,
-//             description: `PF for ${month}`,
-//             amount: pf,
-//             due: statutory_due_date,
-//           });
-//         }
- 
-//         // 4️⃣ Professional Tax
-//         if (professional_tax > 0) {
-//           expensesToInsert.push({
-//             type: `Professional Tax - ${employee_name} (${employee_id})`,
-//             description: `Professional Tax for ${month}`,
-//             amount: professional_tax,
-//             due: statutory_due_date,
-//           });
-//         }
- 
-//         // INSERT EXPENSES
-//         const insertExpenseQuery = `
-//           INSERT INTO expenses (
-//             regular, type, description, amount,
-//             currency, raised_date, due_date,
-//             paid_date, paid_amount, Active, status
-//           ) VALUES (?, ?, ?, ?, 'INR', ?, ?, NULL, NULL, 'Yes', 'Raised')
-//         `;
- 
-//         expensesToInsert.forEach((exp) => {
-//           db.run(insertExpenseQuery, [
-//             "Yes",
-//             exp.type,
-//             exp.description,
-//             exp.amount,
-//             raised_date,
-//             exp.due,
-//           ]);
-//         });
- 
-//         res.json({
-//           message: "Salary and expenses created successfully",
-//           salary_payment_id: this.lastID,
-//           expenses_created: expensesToInsert.length,
-//         });
-//       }
-//     );
-//   });
-// });
 
-// GET Available Employees For Salaries
 
 // 💰 Add Salary + create related expenses
 app.post("/addsalaries", (req, res) => {
@@ -1078,7 +894,6 @@ app.post("/addsalaries", (req, res) => {
     );
   });
 });
-
 
 
 
@@ -1408,6 +1223,7 @@ app.get("/getProject/:id", (req, res) => {
   });
 });
 
+
 // API to fetch active projects
 app.get("/getactive-projects", (req, res) => {
   const { filterMonthYear } = req.query; // e.g., "2025-09"
@@ -1446,11 +1262,45 @@ app.get("/getactive-projects", (req, res) => {
       console.error("Error fetching active projects:", err.message);
       return res.status(500).json({ error: err.message });
     }
-    res.json(rows);
-    console.log(rows);
+
+    // 🔹 Fetch employee master to map IDs → Names
+    db.all(
+      "SELECT employee_id, employee_name FROM employees",
+      [],
+      (err2, emps) => {
+        if (err2) {
+          console.error("Error fetching employees:", err2.message);
+          return res.status(500).json({ error: err2.message });
+        }
+
+        const map = new Map(emps.map((e) => [e.employee_id, e.employee_name]));
+
+        const formatted = rows.map((row) => {
+          let parsed = [];
+          try {
+            const arr = JSON.parse(row.employees || "[]");
+            parsed = arr.map((emp) => ({
+              id: typeof emp === "string" ? emp : emp.id,
+              name:
+                typeof emp === "string"
+                  ? map.get(emp) || emp // fallback to ID if name missing
+                  : emp.name,
+            }));
+          } catch (e) {
+            parsed = [];
+          }
+
+          return {
+            ...row,
+            employees: parsed, // ✅ now an array, not string
+          };
+        });
+
+        res.json(formatted);
+      }
+    );
   });
 });
-
 
 // Prpoject without INvoice this Month
 app.get("/getprojects-no-invoice-current-month", (req, res) => {
@@ -1472,6 +1322,44 @@ app.get("/getprojects-no-invoice-current-month", (req, res) => {
     res.json(rows);
   });
 });
+
+// DELETE /invoices/:id  -- only removes invoice row (does NOT update Projects)
+app.delete("/invoices/:id", (req, res) => {
+  const invoiceId = req.params.id;
+  if (!invoiceId) {
+    return res.status(400).json({ success: false, message: "Missing invoice id" });
+  }
+
+  db.serialize(() => {
+    // 1) fetch the invoice (so we can return it)
+    db.get("SELECT * FROM invoices WHERE id = ?", [invoiceId], (err, invoice) => {
+      if (err) {
+        console.error("DB error fetching invoice:", err);
+        return res.status(500).json({ success: false, error: "Database error fetching invoice", details: err.message });
+      }
+      if (!invoice) {
+        return res.status(404).json({ success: false, message: "Invoice not found" });
+      }
+
+      // 2) delete invoice row
+      db.run("DELETE FROM invoices WHERE id = ?;", [invoiceId], function (delErr) {
+        if (delErr) {
+          console.error("Failed to delete invoice:", delErr);
+          return res.status(500).json({ success: false, error: "Failed to delete invoice", details: delErr.message });
+        }
+
+        // success: return the previously fetched invoice object
+        return res.json({
+          success: true,
+          message: "Invoice deleted.",
+          invoice: invoice,
+        });
+      });
+    });
+  });
+});
+
+
 
 // Update Project by ID
 app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
@@ -1993,317 +1881,215 @@ app.put("/updateinvoices/:id", (req, res) => {
 
 //       const salaryId = this.lastID;
 
-app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
-  const { employeeId, month } = req.params;
-  const { paid, lop, paidAmount, actualToPay } = req.body;
+// app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
+//   const { employeeId, month } = req.params;
+//   const { paid, lop, paidAmount, actualToPay } = req.body;
 
-  if (!paid || !month) {
-    return res.status(400).json({
-      success: false,
-      message: "Paid status and month are required",
-    });
-  }
+//   if (!paid || !month) {
+//     return res.status(400).json({
+//       success: false,
+//       message: "Paid status and month are required",
+//     });
+//   }
 
-  const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
+//   const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
 
-  const query = `
-    UPDATE monthly_salary_payments
-    SET 
-      paid = ?, 
-      lop = ?, 
-      paid_amount = ?, 
-      actual_to_pay = ?, 
-      paid_date = ?
-    WHERE employee_id = ? AND month = ?
-  `;
+//   const query = `
+//     UPDATE monthly_salary_payments
+//     SET 
+//       paid = ?, 
+//       lop = ?, 
+//       paid_amount = ?, 
+//       actual_to_pay = ?, 
+//       paid_date = ?
+//     WHERE employee_id = ? AND month = ?
+//   `;
 
-  db.run(
-    query,
-    [
-      paid,
-      lop || 0,
-      paidAmount || 0,
-      actualToPay || 0,
-      paidDate,
-      employeeId,
-      month,
-    ],
-    function (err) {
+//   db.run(
+//     query,
+//     [
+//       paid,
+//       lop || 0,
+//       paidAmount || 0,
+//       actualToPay || 0,
+//       paidDate,
+//       employeeId,
+//       month,
+//     ],
+//     function (err) {
+//       if (err) {
+//         console.error("❌ Error updating salary:", err);
+//         return res.status(500).json({
+//           success: false,
+//           message: "Database update failed",
+//         });
+//       }
+
+//       if (this.changes === 0) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "No salary record found for this employee and month",
+//         });
+//       }
+
+//       // ============================================================
+//       // 🔥 CALL FUNCTION TO ALSO UPDATE expense_payments
+//       // ============================================================
+//       if (paid === "Yes") {
+//         updateExpensePaymentOnSalaryPaid(employeeId, month, paidAmount, paidDate);
+//       }
+
+//       return res.json({
+//         success: true,
+//         message: "Salary updated successfully",
+//       });
+//     }
+//   );
+// });
+// Replace existing route with this atomic version
+
+
+
+
+
+
+
+//HERE I WILL UPDATE THE CODE TODAY
+
+
+/* =========================
+   Helpers
+   ========================= */
+
+// Safe read for total_insurance
+function getEmployeeInsurance(employeeId, cb) {
+  db.get(
+    `SELECT total_insurance AS insurance_val FROM salary_payments WHERE employee_id = ? LIMIT 1`,
+    [employeeId],
+    (err, row) => {
       if (err) {
-        console.error("❌ Error updating salary:", err);
-        return res.status(500).json({
-          success: false,
-          message: "Database update failed",
-        });
+        console.error("getEmployeeInsurance error:", err);
+        return cb(err);
       }
-
-      if (this.changes === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "No salary record found for this employee and month",
-        });
-      }
-
-      // ============================================================
-      // 🔥 CALL FUNCTION TO ALSO UPDATE expense_payments
-      // ============================================================
-      if (paid === "Yes") {
-        updateExpensePaymentOnSalaryPaid(employeeId, month, paidAmount, paidDate);
-      }
-
-      return res.json({
-        success: true,
-        message: "Salary updated successfully",
-      });
+      const val = row ? parseFloat(row.insurance_val) || 0 : 0;
+      return cb(null, val);
     }
   );
-});
+}
 
-
-// ==============================================================
-// ⭐ Helper Function to update expense_payments based on salary
-// ==============================================================
-function updateExpensePaymentOnSalaryPaid(employeeId, month_year, paidAmount, paidDate) {
-  console.log("🔄 Updating expense_payments for salary payment...");
-
-  // 1️⃣ Get employee name
-  const empQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
-
-  db.get(empQuery, [employeeId], (err, emp) => {
-    if (err || !emp) {
-      return console.error("❌ Employee not found in salary_payments.");
+// Credit insurance into KITTY account (runs its own small transaction)
+function creditInsuranceToKitty(employeeId, paidDate, cb = () => {}) {
+  console.log(`🔄 creditInsuranceToKitty: ${employeeId} ${paidDate}`);
+  getEmployeeInsurance(employeeId, (err, insuranceAmount) => {
+    if (err) return cb(err);
+    if (!insuranceAmount || insuranceAmount <= 0) {
+      console.log("ℹ️ No insurance to credit for", employeeId);
+      return cb(null, { credited: false, reason: "zero_insurance" });
     }
 
-    // Build type string
-    const typeString = `Salary - ${emp.employee_name} (${employeeId})`;
+    db.get(`SELECT * FROM accounts WHERE account_name LIKE '%KITTY%' LIMIT 1`, [], (kErr, kittyAcc) => {
+      if (kErr) return cb(kErr);
+      if (!kittyAcc) return cb(new Error("KITTY account not found"));
 
-    // 2️⃣ Get expense_id from expenses table
-    const expQuery = `SELECT auto_id FROM expenses WHERE type = ?`;
+      const prevBal = parseFloat(kittyAcc.balance) || 0;
+      const newBal = prevBal + insuranceAmount;
 
-    db.get(expQuery, [typeString], (err, expense) => {
-      if (err || !expense) {
-        return console.error("❌ No expense entry found for:", typeString);
-      }
+      db.serialize(() => {
+        db.run("BEGIN TRANSACTION", (bErr) => {
+          if (bErr) return cb(bErr);
+          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBal, kittyAcc.account_id], function (updErr) {
+            if (updErr) {
+              console.error("❌ Failed to update KITTY:", updErr);
+              return db.run("ROLLBACK", () => cb(updErr));
+            }
 
-      const expenseId = expense.auto_id;
+            const now = new Date();
+            const hhmm = `${now.getHours().toString().padStart(2, "0")}${now.getMinutes().toString().padStart(2, "0")}`;
+            const txId = `CRD|KITTY|INS|${paidDate || now.toISOString().slice(0, 10)}|${hhmm}`;
+            const description = `Insurance credit for employee ${employeeId}`;
 
-      // 3️⃣ Update expense_payments entry
-      const updateExpensePayment = `
-        UPDATE expense_payments
-        SET 
-          paid_amount = ?, 
-          paid_date = ?, 
-          status = 'Paid'
-        WHERE expense_id = ? AND month_year = ?
-      `;
-
-      db.run(
-        updateExpensePayment,
-        [paidAmount, paidDate, expenseId, month_year],
-        function (err) {
-          if (err) {
-            return console.error("❌ Error updating expense_payments:", err);
-          }
-
-          if (this.changes === 0) {
-            console.log("⚠️ No existing expense_payments found. Ignoring.");
-          } else {
-            console.log("✅ expense_payments updated successfully.");
-          }
-        }
-      );
+            db.run(
+              `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+               VALUES (?, ?, 'Credit', ?, ?, ?, ?, datetime('now'))`,
+              [txId, kittyAcc.account_number, insuranceAmount, description, prevBal, newBal],
+              function (insErr) {
+                if (insErr) {
+                  console.error("❌ Failed to insert KITTY tx:", insErr);
+                  return db.run("ROLLBACK", () => cb(insErr));
+                }
+                db.run("COMMIT", (cErr) => {
+                  if (cErr) return db.run("ROLLBACK", () => cb(cErr));
+                  console.log(`✅ Credited ₹${insuranceAmount} to KITTY ${kittyAcc.account_number}`);
+                  return cb(null, { credited: true, transaction_id: txId, previous_balance: prevBal, updated_balance: newBal });
+                });
+              }
+            );
+          });
+        });
+      });
     });
   });
 }
 
+/* =========================
+   Existing helpers preserved
+   ========================= */
 
-app.put("/pay-expense", (req, res) => {
-  const { expense_id, paid_amount, paid_date } = req.body;
+function updateExpensePaymentOnSalaryPaid(employeeId, month_year, paidAmount, paidDate) {
+  console.log("🔄 Updating expense_payments for salary payment...");
 
-  if (!expense_id || !paid_amount || !paid_date) {
-    return res.status(400).json({ success: false, message: "Missing fields" });
-  }
+  const empQuery = `SELECT employee_name FROM salary_payments WHERE employee_id = ?`;
+  db.get(empQuery, [employeeId], (err, emp) => {
+    if (err || !emp) return console.error("❌ Employee not found in salary_payments.");
 
-  // parse amount safely
-  const amount = Number(paid_amount);
-  if (Number.isNaN(amount) || amount <= 0) {
-    return res.status(400).json({ success: false, message: "Invalid paid_amount" });
-  }
-
-  const paidMonthYear = paid_date.slice(0, 7); // "YYYY-MM"
-
-  const now = new Date();
-  const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
-    .getMinutes()
-    .toString()
-    .padStart(2, "0")}`;
-
-  // 1️⃣ Get Expense details
-  db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
-    if (err) return res.status(500).json({ success: false, message: err.message });
-    if (!expense)
-      return res.status(404).json({ success: false, message: "Expense not found" });
-
-    const expenseType = expense.type || expense.description || "General";
-    const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
-    const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
-    const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
-
-    // 2️⃣ Get current account
-    db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
-      if (err) return res.status(500).json({ success: false, message: err.message });
-      if (!currentAcc)
-        return res.status(500).json({ success: false, message: "Current account not found" });
-
-      const prevBalance = parseFloat(currentAcc.balance) || 0;
-      if (prevBalance < amount) {
-        return res.status(400).json({
-          success: false,
-          message: `Insufficient funds. Current balance: ₹${prevBalance} — required: ₹${amount}`,
-        });
-      }
-      const newBalance = prevBalance - amount;
-
-      // Run DB changes inside a transaction so everything is atomic
-      db.serialize(() => {
-        db.run("BEGIN TRANSACTION", (err) => {
-          if (err) {
-            console.error("BEGIN TRANSACTION error:", err);
-            return res.status(500).json({ success: false, message: "Transaction start failed" });
-          }
-
-          // 1) update account balance
-          db.run(
-            `UPDATE accounts SET balance = ? WHERE account_id = ?`,
-            [newBalance, currentAcc.account_id],
-            function (err) {
-              if (err) {
-                console.error("Error updating accounts:", err);
-                return db.run("ROLLBACK", () => {
-                  return res.status(500).json({ success: false, message: "Failed to update account" });
-                });
-              }
-
-              // 2) insert transaction
-              db.run(
-                `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
-                 VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))`,
-                [
-                  transactionId,
-                  currentAcc.account_number,
-                  amount,
-                  description,
-                  prevBalance,
-                  newBalance,
-                ],
-                function (err) {
-                  if (err) {
-                    console.error("Error inserting transaction:", err);
-                    return db.run("ROLLBACK", () => {
-                      return res.status(500).json({ success: false, message: "Failed to insert transaction" });
-                    });
-                  }
-
-                  // 3) insert or update expense_payments
-                  // NOTE: ON CONFLICT requires a UNIQUE constraint on (expense_id, month_year)
-                  db.run(
-                    `INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
-                     VALUES (?, ?, ?, ?, ?, 'Paid')
-                     ON CONFLICT(expense_id, month_year) DO UPDATE SET
-                       paid_amount = excluded.paid_amount,
-                       paid_date = excluded.paid_date,
-                       status = 'Paid'`,
-                    [expense_id, paidMonthYear, expense.amount, amount, paid_date],
-                    function (err) {
-                      if (err) {
-                        console.error("Error upserting expense_payments:", err);
-                        return db.run("ROLLBACK", () => {
-                          return res.status(500).json({ success: false, message: "Failed to record payment" });
-                        });
-                      }
-
-                      // 4) commit transaction
-                      db.run("COMMIT", (err) => {
-  if (err) {
-    console.error("COMMIT error:", err);
-    return db.run("ROLLBACK", () => {
-      return res.status(500).json({ success: false, message: "Failed to commit transaction" });
+    const typeString = `Salary - ${emp.employee_name} (${employeeId})`;
+    const expQuery = `SELECT auto_id FROM expenses WHERE type = ? LIMIT 1`;
+    db.get(expQuery, [typeString], (err2, expense) => {
+      if (err2 || !expense) return console.error("❌ No expense entry found for:", typeString);
+      const expenseId = expense.auto_id;
+      const updateExpensePayment = `
+        UPDATE expense_payments
+        SET paid_amount = ?, paid_date = ?, status = 'Paid'
+        WHERE expense_id = ? AND month_year = ?
+      `;
+      db.run(updateExpensePayment, [paidAmount, paidDate, expenseId, month_year], function (err3) {
+        if (err3) return console.error("❌ Error updating expense_payments:", err3);
+        if (this.changes === 0) console.log("⚠️ No existing expense_payments found. Ignoring.");
+        else console.log("✅ expense_payments updated successfully.");
+      });
     });
-  }
-
-  // Upsert into monthly_salary_payments for salary expenses
-  updateSalaryOnExpensePaid(expense, expenseType, paidMonthYear, amount, paid_date);
-
-  return res.json({
-    success: true,
-    message: `Expense paid successfully.`,
-    transaction_id: transactionId,
-    previous_balance: prevBalance,
-    updated_balance: newBalance,
   });
-});
-// commit
-                    } // expense_payments callback
-                  ); // db.run expense_payments
-                } // transaction insert callback
-              ); // db.run transaction insert
-            } // update accounts callback
-          ); // db.run update accounts
-        }); // begin transaction
-      }); // serialize
-    }); // get accounts
-  }); // get expense
-});
+}
 
 function updateSalaryOnExpensePaid(expense, expenseType, month_year, paidAmount, paidDate) {
   console.log("🔄 Salary update triggered from expense...");
 
-  // 1) Quick check - is this a salary expense?
   if (!/salary/i.test(expenseType)) {
     console.log("⏭ Not a salary expense. Skipping monthly_salary_payments upsert.");
     return;
   }
 
-  // 2) Determine employee ID (prefer explicit column on expense if present)
-  //    Expecting expense.employee_id to exist; otherwise fall back to parsing string.
   let employeeId = null;
   if (expense && (expense.employee_id || expense.emp_id || expense.employeeId)) {
     employeeId = (expense.employee_id || expense.emp_id || expense.employeeId).toString().trim();
   } else {
-    // fallback parse from the expense type string e.g. "Salary - John Doe (EMP123)"
     const cleaned = expenseType.replace(/salary\s*[-:]?\s*/i, "").trim();
     const idMatch = cleaned.match(/\(([^)]+)\)/);
-    if (idMatch) {
-      employeeId = idMatch[1].trim();
-    }
+    if (idMatch) employeeId = idMatch[1].trim();
   }
 
   if (!employeeId) {
-    console.log("❌ Could not determine employee ID (no expense.employee_id and parsing failed). Aborting salary upsert.");
+    console.log("❌ Could not determine employee ID. Aborting salary upsert.");
     return;
   }
 
-  // 3) Clean employee name for logs (optional)
-  const employeeName = (expense && expense.employee_name) ||
-    (expense && (expense.employee || expense.name)) ||
-    expenseType.replace(/\([^)]*\)/g, "").replace(/salary\s*[-:]?\s*/i, "").trim();
-
-  console.log("👤 Employee:", employeeName, "🆔", employeeId);
-
-  // 4) Target month in YYYY-MM (normalize)
+  const employeeName = (expense && expense.employee_name) || (expense && (expense.employee || expense.name)) || expenseType.replace(/\([^)]*\)/g, "").replace(/salary\s*[-:]?\s*/i, "").trim();
   const targetMonth = month_year.slice(0, 7);
 
-  // 5) Upsert logic: try update first; if no rows changed, insert a new row.
-  //    We use placeholders to avoid SQL injection and ensure types are correct.
   const updateQuery = `
     UPDATE monthly_salary_payments
-    SET
-      paid = 'Yes',
-      paid_amount = ?,
-      actual_to_pay = ?,
-      paid_date = ?
-    WHERE employee_id = ?
-      AND substr(month,1,7) = ?
+    SET paid = 'Yes', paid_amount = ?, actual_to_pay = ?, paid_date = ?
+    WHERE employee_id = ? AND substr(month,1,7) = ?
   `;
 
   db.run(updateQuery, [paidAmount, paidAmount, paidDate, employeeId, targetMonth], function (err) {
@@ -2311,44 +2097,934 @@ function updateSalaryOnExpensePaid(expense, expenseType, month_year, paidAmount,
       console.error("❌ Error running monthly salary UPDATE:", err);
       return;
     }
-
     if (this.changes && this.changes > 0) {
       console.log(`✅ Updated monthly_salary_payments for ${employeeId} (${targetMonth})`);
       return;
     }
 
-    // No row updated → insert a new monthly salary row
     const insertQuery = `
-      INSERT INTO monthly_salary_payments
-        (employee_id, employee_name, month, paid, paid_amount, actual_to_pay, paid_date)
+      INSERT INTO monthly_salary_payments (employee_id, employee_name, month, paid, paid_amount, actual_to_pay, paid_date)
       VALUES (?, ?, ?, 'Yes', ?, ?, ?)
     `;
-
     db.run(insertQuery, [employeeId, employeeName || "", targetMonth, paidAmount, paidAmount, paidDate], function (insertErr) {
       if (insertErr) {
-        // If insert fails due to unique constraint race, try update again (defensive)
         console.error("⚠️ Insert into monthly_salary_payments failed:", insertErr);
-
-        // attempt a final update (best-effort)
         db.run(updateQuery, [paidAmount, paidAmount, paidDate, employeeId, targetMonth], function (finalErr) {
-          if (finalErr) {
-            console.error("❌ Final attempt to update monthly_salary_payments also failed:", finalErr);
-          } else if (this.changes && this.changes > 0) {
-            console.log("✅ Final update attempt succeeded after insert conflict.");
-          } else {
-            console.log("⚠️ Final update attempt made no changes (strange).");
-          }
+          if (finalErr) console.error("❌ Final attempt also failed:", finalErr);
+          else if (this.changes && this.changes > 0) console.log("✅ Final update attempt succeeded after insert conflict.");
         });
-
         return;
       }
-
       console.log(`✅ Inserted monthly_salary_payments for ${employeeId} (${targetMonth})`);
     });
   });
 }
 
-// Get monthly salary by month
+
+/* =========================
+   PUT /monthlySalary/update/:employeeId/:month
+   (atomic: update monthly_salary_payments, update expense_payments if expense exists, credit KITTY)
+   ========================= */
+// app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
+//   const { employeeId, month } = req.params;
+//   const { paid, lop, paidAmount, actualToPay } = req.body;
+
+//   if (!paid || !month) {
+//     return res.status(400).json({ success: false, message: "Paid status and month are required" });
+//   }
+
+//   const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
+//   const lopVal = Number(lop || 0);
+//   const paidAmtVal = Number(paidAmount || 0);
+//   const actualToPayVal = Number(actualToPay || paidAmtVal || 0);
+
+//   if (paid === "Yes" && (Number.isNaN(paidAmtVal) || paidAmtVal < 0)) {
+//     return res.status(400).json({ success: false, message: "Invalid paidAmount" });
+//   }
+
+//   db.serialize(() => {
+//     db.run("BEGIN TRANSACTION", (beginErr) => {
+//       if (beginErr) {
+//         console.error("BEGIN TRANSACTION error:", beginErr);
+//         return res.status(500).json({ success: false, message: "Transaction start failed" });
+//       }
+
+//       const updateSalarySql = `
+//         UPDATE monthly_salary_payments
+//         SET paid = ?, lop = ?, paid_amount = ?, actual_to_pay = ?, paid_date = ?
+//         WHERE employee_id = ? AND month = ?
+//       `;
+//       db.run(updateSalarySql, [paid, lopVal, paidAmtVal, actualToPayVal, paidDate, employeeId, month], function (updErr) {
+//         if (updErr) {
+//           console.error("❌ Error updating salary:", updErr);
+//           return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Database update failed" }));
+//         }
+
+//         if (this.changes === 0) {
+//           return db.run("ROLLBACK", () => res.status(404).json({ success: false, message: "No salary record found for this employee and month" }));
+//         }
+
+//         if (paid !== "Yes") {
+//           return db.run("COMMIT", (commitErr) => {
+//             if (commitErr) {
+//               console.error("COMMIT error (not paid path):", commitErr);
+//               return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to commit transaction" }));
+//             }
+//             return res.json({ success: true, message: "Salary updated (not paid)" });
+//           });
+//         }
+
+//         // paid === 'Yes' -> update expense_payments (if expense exists) and credit KITTY
+//         db.get(`SELECT employee_name, total_insurance FROM salary_payments WHERE employee_id = ? LIMIT 1`, [employeeId], (empErr, empRow) => {
+//           if (empErr) {
+//             console.error("❌ Error fetching employee:", empErr);
+//             return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to fetch employee" }));
+//           }
+//           if (!empRow) {
+//             console.error("❌ Employee row missing in salary_payments for:", employeeId);
+//             return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Employee data missing" }));
+//           }
+
+//           const employeeName = empRow.employee_name || "";
+//           const insuranceAmount = parseFloat(empRow.total_insurance) || 0;
+//           const typeString = `Salary - ${employeeName} (${employeeId})`;
+
+//           // find expense row for this salary type (optional)
+//           db.get(`SELECT auto_id, amount FROM expenses WHERE type = ? LIMIT 1`, [typeString], (expErr, expenseRow) => {
+//             if (expErr) {
+//               console.error("❌ Error querying expenses:", expErr);
+//               return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to query expenses" }));
+//             }
+
+//             const upsertExpensePayment = (next) => {
+//               if (!expenseRow) return next();
+//               const expenseId = expenseRow.auto_id;
+//               const updateExpPaySql = `
+//                 UPDATE expense_payments
+//                 SET paid_amount = ?, paid_date = ?, status = 'Paid'
+//                 WHERE expense_id = ? AND month_year = ?
+//               `;
+//               db.run(updateExpPaySql, [paidAmtVal, paidDate, expenseId, month], function (upExpErr) {
+//                 if (upExpErr) {
+//                   console.error("❌ Error updating expense_payments:", upExpErr);
+//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update expense_payments" }));
+//                 }
+//                 if (this.changes > 0) return next();
+//                 const insertExpPaySql = `
+//                   INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+//                   VALUES (?, ?, ?, ?, ?, 'Paid')
+//                 `;
+//                 db.run(insertExpPaySql, [expenseId, month, expenseRow.amount || paidAmtVal, paidAmtVal, paidDate], function (insErr) {
+//                   if (insErr) {
+//                     console.error("❌ Error inserting expense_payments:", insErr);
+//                     return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to insert expense_payments" }));
+//                   }
+//                   return next();
+//                 });
+//               });
+//             };
+
+//             const finalize = (result) => {
+//               db.run("COMMIT", (commitErr) => {
+//                 if (commitErr) {
+//                   console.error("❌ COMMIT error:", commitErr);
+//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to commit transaction" }));
+//                 }
+//                 return res.json({
+//                   success: true,
+//                   message: "Salary updated and marked paid; expense + KITTY updated.",
+//                   kitty_credit: result || null,
+//                 });
+//               });
+//             };
+
+//             // now upsert expense_payments then credit KITTY (if insuranceAmount > 0)
+//             upsertExpensePayment((upErr) => {
+//               if (upErr) return; // handled inside upsertExpensePayment
+
+//               if (!insuranceAmount || insuranceAmount <= 0) {
+//                 return finalize(null);
+//               }
+
+//               // credit kitty inside same transaction
+//               db.get(`SELECT * FROM accounts WHERE account_name LIKE '%KITTY%' LIMIT 1`, [], (kErr, kittyAcc) => {
+//                 if (kErr) {
+//                   console.error("❌ Error finding KITTY account:", kErr);
+//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to find KITTY account" }));
+//                 }
+//                 if (!kittyAcc) {
+//                   console.error("❌ No KITTY account found (account_name LIKE '%KITTY%')");
+//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "KITTY account not found" }));
+//                 }
+
+//                 const prevBal = parseFloat(kittyAcc.balance) || 0;
+//                 const newBal = prevBal + insuranceAmount;
+
+//                 db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBal, kittyAcc.account_id], function (updErr) {
+//                   if (updErr) {
+//                     console.error("❌ Error updating KITTY balance:", updErr);
+//                     return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update KITTY balance" }));
+//                   }
+
+//                   const now2 = new Date();
+//                   const hhmm2 = `${now2.getHours().toString().padStart(2, "0")}${now2
+//                     .getMinutes()
+//                     .toString()
+//                     .padStart(2, "0")}`;
+//                   const kittyTxId = `CRD|KITTY|INS|${paidDate}|${hhmm2}`;
+//                   const desc = `Insurance credit for employee ${employeeId}`;
+
+//                   db.run(
+//                     `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+//                      VALUES (?, ?, 'Credit', ?, ?, ?, ?, datetime('now'))`,
+//                     [kittyTxId, kittyAcc.account_number, insuranceAmount, desc, prevBal, newBal],
+//                     function (insTxErr) {
+//                       if (insTxErr) {
+//                         console.error("❌ Error inserting KITTY transaction:", insTxErr);
+//                         return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to record KITTY transaction" }));
+//                       }
+
+//                       // success, finalize
+//                       return finalize({
+//                         credited: true,
+//                         transaction_id: kittyTxId,
+//                         previous_balance: prevBal,
+//                         updated_balance: newBal,
+//                       });
+//                     }
+//                   );
+//                 });
+//               });
+//             }); // upsertExpensePayment
+//           }); // get expenseRow
+//         }); // get empRow
+//       }); // update monthly_salary_payments
+//     }); // BEGIN
+//   }); // serialize
+// });
+
+
+app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
+  const { employeeId, month } = req.params;
+  const { paid, lop, paidAmount, actualToPay } = req.body;
+
+  if (!paid || !month) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Paid status and month are required" });
+  }
+
+  const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
+  const lopVal = Number(lop || 0);
+  const paidAmtVal = Number(paidAmount || 0);
+  const actualToPayVal = Number(actualToPay || paidAmtVal || 0);
+
+  if (paid === "Yes" && (Number.isNaN(paidAmtVal) || paidAmtVal < 0)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid paidAmount" });
+  }
+
+  // 🔹 Helper: get employee_name for insert
+  const getEmployeeName = (callback) => {
+    db.get(
+      `SELECT employee_name FROM salary_payments WHERE employee_id = ? LIMIT 1`,
+      [employeeId],
+      (err, row) => {
+        if (err) return callback(err);
+        if (!row) return callback(new Error("Employee not found"));
+        callback(null, row.employee_name);
+      }
+    );
+  };
+
+  // ----------------------------------------------------------------------
+  //  C R E D I T  K I T T Y  +  E X P E N S E  (unchanged from your logic)
+  // ----------------------------------------------------------------------
+  const continueToKittyCredit = () => {
+    db.get(
+      `SELECT employee_name, total_insurance FROM salary_payments WHERE employee_id = ? LIMIT 1`,
+      [employeeId],
+      (empErr, empRow) => {
+        if (empErr || !empRow) {
+          return db.run("ROLLBACK", () =>
+            res.status(500).json({ success: false, message: "Employee data missing" })
+          );
+        }
+
+        const employeeName = empRow.employee_name;
+        const insuranceAmount = parseFloat(empRow.total_insurance) || 0;
+        const typeString = `Salary - ${employeeName} (${employeeId})`;
+
+        db.get(
+          `SELECT auto_id, amount FROM expenses WHERE type = ? LIMIT 1`,
+          [typeString],
+          (expErr, expenseRow) => {
+            if (expErr) {
+              return db.run("ROLLBACK", () =>
+                res.status(500).json({ success: false, message: "Expense lookup failed" })
+              );
+            }
+
+            const upsertExpensePayment = (next) => {
+              if (!expenseRow) return next();
+
+              const expenseId = expenseRow.auto_id;
+
+              db.run(
+                `
+                UPDATE expense_payments
+                SET paid_amount = ?, paid_date = ?, status = 'Paid'
+                WHERE expense_id = ? AND month_year = ?
+                `,
+                [paidAmtVal, paidDate, expenseId, month],
+                function (updErr) {
+                  if (updErr) {
+                    return db.run("ROLLBACK", () =>
+                      res.status(500).json({ success: false, message: "expense_payments update failed" })
+                    );
+                  }
+
+                  if (this.changes > 0) return next();
+
+                  db.run(
+                    `
+                    INSERT INTO expense_payments
+                      (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+                    VALUES (?, ?, ?, ?, ?, 'Paid')
+                    `,
+                    [
+                      expenseId,
+                      month,
+                      expenseRow.amount || paidAmtVal,
+                      paidAmtVal,
+                      paidDate,
+                    ],
+                    function (insErr) {
+                      if (insErr) {
+                        return db.run("ROLLBACK", () =>
+                          res.status(500).json({
+                            success: false,
+                            message: "expense_payments insert failed",
+                          })
+                        );
+                      }
+                      next();
+                    }
+                  );
+                }
+              );
+            };
+
+            const finalize = (kittyDetails) => {
+              db.run("COMMIT", (commitErr) => {
+                if (commitErr) {
+                  return db.run("ROLLBACK", () =>
+                    res.status(500).json({ success: false, message: "Commit failed" })
+                  );
+                }
+
+                res.json({
+                  success: true,
+                  message: "Salary paid successfully",
+                  kitty: kittyDetails || null,
+                });
+              });
+            };
+
+            upsertExpensePayment(() => {
+              if (insuranceAmount <= 0) return finalize(null);
+
+              db.get(
+                `SELECT * FROM accounts WHERE account_name LIKE '%KITTY%' LIMIT 1`,
+                [],
+                (kErr, kittyAcc) => {
+                  if (kErr || !kittyAcc) {
+                    return db.run("ROLLBACK", () =>
+                      res.status(500).json({ success: false, message: "KITTY account missing" })
+                    );
+                  }
+
+                  const prevBal = parseFloat(kittyAcc.balance);
+                  const newBal = prevBal + insuranceAmount;
+
+                  db.run(
+                    `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+                    [newBal, kittyAcc.account_id],
+                    function (updErr) {
+                      if (updErr) {
+                        return db.run("ROLLBACK", () =>
+                          res.status(500).json({ success: false, message: "KITTY update failed" })
+                        );
+                      }
+
+                      const txId = `KITTY|CR|${Date.now()}`;
+                      const desc = `Insurance credit for ${employeeId}`;
+
+                      db.run(
+                        `
+                        INSERT INTO transactions 
+                          (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+                        VALUES (?, ?, 'Credit', ?, ?, ?, ?, datetime('now'))
+                        `,
+                        [
+                          txId,
+                          kittyAcc.account_number,
+                          insuranceAmount,
+                          desc,
+                          prevBal,
+                          newBal,
+                        ],
+                        function (txErr) {
+                          if (txErr) {
+                            return db.run("ROLLBACK", () =>
+                              res.status(500).json({
+                                success: false,
+                                message: "KITTY transaction failed",
+                              })
+                            );
+                          }
+
+                          finalize({
+                            credited: true,
+                            transaction_id: txId,
+                            previous_balance: prevBal,
+                            updated_balance: newBal,
+                          });
+                        }
+                      );
+                    }
+                  );
+                }
+              );
+            });
+          }
+        );
+      }
+    );
+  };
+
+  // ----------------------------------------------------------------------
+  //  SALARY PAYMENT FLOW  (UPDATE → INSERT → DEBIT CURRENT → KITTY)
+  // ----------------------------------------------------------------------
+  db.serialize(() => {
+    db.run("BEGIN TRANSACTION");
+
+    const updateSql = `
+      UPDATE monthly_salary_payments
+      SET paid = ?, lop = ?, paid_amount = ?, actual_to_pay = ?, paid_date = ?
+      WHERE employee_id = ? AND month = ?
+    `;
+
+    db.run(
+      updateSql,
+      [paid, lopVal, paidAmtVal, actualToPayVal, paidDate, employeeId, month],
+      function (updErr) {
+        if (updErr) {
+          return db.run("ROLLBACK", () =>
+            res.status(500).json({ success: false, message: "Update failed" })
+          );
+        }
+
+        // If no rows updated → INSERT
+        if (this.changes === 0) {
+          getEmployeeName((err, employeeName) => {
+            if (err) {
+              return db.run("ROLLBACK", () =>
+                res.status(500).json({ success: false, message: "Employee fetch failed" })
+              );
+            }
+
+            db.run(
+              `
+              INSERT INTO monthly_salary_payments
+                (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay, paid_date, due_date)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `,
+              [
+                employeeId,
+                employeeName,
+                paid,
+                month,
+                lopVal,
+                paidAmtVal,
+                actualToPayVal,
+                paidDate,
+                null,
+              ],
+              function (insErr) {
+                if (insErr) {
+                  return db.run("ROLLBACK", () =>
+                    res.status(500).json({ success: false, message: "Insert failed" })
+                  );
+                }
+
+                if (paid !== "Yes") {
+                  return db.run("COMMIT", () =>
+                    res.json({ success: true, message: "Salary created (not paid)" })
+                  );
+                }
+
+                debitCurrentAccount(employeeName);
+              }
+            );
+          });
+
+          return;
+        }
+
+        // If update succeeded but not paid
+        if (paid !== "Yes") {
+          return db.run("COMMIT", () =>
+            res.json({ success: true, message: "Salary updated (not paid)" })
+          );
+        }
+
+        // Continue to debit
+        getEmployeeName((_, employeeName) => debitCurrentAccount(employeeName));
+      }
+    );
+
+    // ==========================================================
+    // 🔥 UPDATED FUNCTION — DEBIT SALARY FROM CURRENT ACCOUNT
+    // ==========================================================
+    function debitCurrentAccount(employeeName) {
+      db.get(
+        `SELECT * FROM accounts WHERE account_type = 'Current' LIMIT 1`,
+        [],
+        (err, currentAcc) => {
+          if (err || !currentAcc) {
+            return db.run("ROLLBACK", () =>
+              res.status(500).json({
+                success: false,
+                message: "Current account not found",
+              })
+            );
+          }
+
+          const prevBal = parseFloat(currentAcc.balance);
+          const newBal = prevBal - paidAmtVal;
+
+          if (newBal < 0) {
+            return db.run("ROLLBACK", () =>
+              res.status(400).json({
+                success: false,
+                message: "Insufficient CURRENT account balance",
+              })
+            );
+          }
+
+          // Update CURRENT balance
+          db.run(
+            `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+            [newBal, currentAcc.account_id],
+            function (updErr) {
+              if (updErr) {
+                return db.run("ROLLBACK", () =>
+                  res.status(500).json({
+                    success: false,
+                    message: "Failed to update CURRENT balance",
+                  })
+                );
+              }
+
+              // ==========================================
+              // ⭐ NEW DEBIT TX FORMAT IMPLEMENTED HERE
+              // ==========================================
+              const now = new Date();
+              const hh = now.getHours().toString().padStart(2, "0");
+              const mm = now.getMinutes().toString().padStart(2, "0");
+              const hhmm = `${hh}${mm}`;
+
+              const debitTypeString = `Salary - ${employeeName} (${employeeId})`;
+
+              const txId = `DEB|Regular|${debitTypeString}|${month}|${hhmm}`;
+              const desc = `Salary debit for ${employeeName} (${employeeId})`;
+
+              db.run(
+                `
+                INSERT INTO transactions 
+                (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+                VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))
+                `,
+                [
+                  txId,
+                  currentAcc.account_number,
+                  paidAmtVal,
+                  desc,
+                  prevBal,
+                  newBal,
+                ],
+                function (txErr) {
+                  if (txErr) {
+                    return db.run("ROLLBACK", () =>
+                      res.status(500).json({
+                        success: false,
+                        message: "Failed to record debit transaction",
+                      })
+                    );
+                  }
+
+                  continueToKittyCredit();
+                }
+              );
+            }
+          );
+        }
+      );
+    }
+  });
+});
+
+
+
+// app.put("/pay-expense", (req, res) => {
+//   const { expense_id, paid_amount, paid_date } = req.body;
+
+//   if (!expense_id || !paid_amount || !paid_date) {
+//     return res.status(400).json({ success: false, message: "Missing fields" });
+//   }
+
+//   // parse amount safely
+//   const amount = Number(paid_amount);
+//   if (Number.isNaN(amount) || amount <= 0) {
+//     return res.status(400).json({ success: false, message: "Invalid paid_amount" });
+//   }
+
+//   const paidMonthYear = paid_date.slice(0, 7); // "YYYY-MM"
+
+//   const now = new Date();
+//   const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
+//     .getMinutes()
+//     .toString()
+//     .padStart(2, "0")}`;
+
+//   // 1️⃣ Get Expense details
+//   db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
+//     if (err) return res.status(500).json({ success: false, message: err.message });
+//     if (!expense)
+//       return res.status(404).json({ success: false, message: "Expense not found" });
+
+//     const expenseType = expense.type || expense.description || "General";
+//     const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
+//     const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
+//     const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
+
+//     // 2️⃣ Get current account
+//     db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
+//       if (err) return res.status(500).json({ success: false, message: err.message });
+//       if (!currentAcc)
+//         return res.status(500).json({ success: false, message: "Current account not found" });
+
+//       const prevBalance = parseFloat(currentAcc.balance) || 0;
+//       if (prevBalance < amount) {
+//         return res.status(400).json({
+//           success: false,
+//           message: `Insufficient funds. Current balance: ₹${prevBalance} — required: ₹${amount}`,
+//         });
+//       }
+//       const newBalance = prevBalance - amount;
+
+//       // Run DB changes inside a transaction so everything is atomic
+//       db.serialize(() => {
+//         db.run("BEGIN TRANSACTION", (err) => {
+//           if (err) {
+//             console.error("BEGIN TRANSACTION error:", err);
+//             return res.status(500).json({ success: false, message: "Transaction start failed" });
+//           }
+
+//           // 1) update account balance
+//           db.run(
+//             `UPDATE accounts SET balance = ? WHERE account_id = ?`,
+//             [newBalance, currentAcc.account_id],
+//             function (err) {
+//               if (err) {
+//                 console.error("Error updating accounts:", err);
+//                 return db.run("ROLLBACK", () => {
+//                   return res.status(500).json({ success: false, message: "Failed to update account" });
+//                 });
+//               }
+
+//               // 2) insert transaction
+//               db.run(
+//                 `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+//                  VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))`,
+//                 [
+//                   transactionId,
+//                   currentAcc.account_number,
+//                   amount,
+//                   description,
+//                   prevBalance,
+//                   newBalance,
+//                 ],
+//                 function (err) {
+//                   if (err) {
+//                     console.error("Error inserting transaction:", err);
+//                     return db.run("ROLLBACK", () => {
+//                       return res.status(500).json({ success: false, message: "Failed to insert transaction" });
+//                     });
+//                   }
+
+//                   // 3) insert or update expense_payments
+//                   // NOTE: ON CONFLICT requires a UNIQUE constraint on (expense_id, month_year)
+//                   db.run(
+//                     `INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+//                      VALUES (?, ?, ?, ?, ?, 'Paid')
+//                      ON CONFLICT(expense_id, month_year) DO UPDATE SET
+//                        paid_amount = excluded.paid_amount,
+//                        paid_date = excluded.paid_date,
+//                        status = 'Paid'`,
+//                     [expense_id, paidMonthYear, expense.amount, amount, paid_date],
+//                     function (err) {
+//                       if (err) {
+//                         console.error("Error upserting expense_payments:", err);
+//                         return db.run("ROLLBACK", () => {
+//                           return res.status(500).json({ success: false, message: "Failed to record payment" });
+//                         });
+//                       }
+
+//                       // 4) commit transaction
+//                       db.run("COMMIT", (err) => {
+//   if (err) {
+//     console.error("COMMIT error:", err);
+//     return db.run("ROLLBACK", () => {
+//       return res.status(500).json({ success: false, message: "Failed to commit transaction" });
+//     });
+//   }
+
+//   // Upsert into monthly_salary_payments for salary expenses
+//   updateSalaryOnExpensePaid(expense, expenseType, paidMonthYear, amount, paid_date);
+
+//   return res.json({
+//     success: true,
+//     message: `Expense paid successfully.`,
+//     transaction_id: transactionId,
+//     previous_balance: prevBalance,
+//     updated_balance: newBalance,
+//   });
+// });
+// // commit
+//                     } // expense_payments callback
+//                   ); // db.run expense_payments
+//                 } // transaction insert callback
+//               ); // db.run transaction insert
+//             } // update accounts callback
+//           ); // db.run update accounts
+//         }); // begin transaction
+//       }); // serialize
+//     }); // get accounts
+//   }); // get expense
+// });
+
+
+
+
+
+
+
+
+/* =========================
+   PUT /pay-expense
+   (atomic: debit current, insert transaction, upsert expense_payments, credit KITTY for salary expenses)
+   ========================= */
+app.put("/pay-expense", (req, res) => {
+  const { expense_id, paid_amount, paid_date } = req.body;
+
+  if (!expense_id || !paid_amount || !paid_date) {
+    return res.status(400).json({ success: false, message: "Missing fields" });
+  }
+
+  const amount = Number(paid_amount);
+  if (Number.isNaN(amount) || amount <= 0) {
+    return res.status(400).json({ success: false, message: "Invalid paid_amount" });
+  }
+
+  const paidMonthYear = paid_date.slice(0, 7);
+  const now = new Date();
+  const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
+    .getMinutes()
+    .toString()
+    .padStart(2, "0")}`;
+
+  db.get(`SELECT * FROM expenses WHERE auto_id = ? LIMIT 1`, [expense_id], (err, expense) => {
+    if (err) return res.status(500).json({ success: false, message: err.message });
+    if (!expense) return res.status(404).json({ success: false, message: "Expense not found" });
+
+    const expenseType = expense.type || expense.description || "General";
+    const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
+    const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
+    const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
+
+    db.get(`SELECT * FROM accounts WHERE account_type = 'Current' LIMIT 1`, (accErr, currentAcc) => {
+      if (accErr) return res.status(500).json({ success: false, message: accErr.message });
+      if (!currentAcc) return res.status(500).json({ success: false, message: "Current account not found" });
+
+      const prevBalance = parseFloat(currentAcc.balance) || 0;
+      if (prevBalance < amount) {
+        return res.status(400).json({ success: false, message: `Insufficient funds. Current balance: ₹${prevBalance} — required: ₹${amount}` });
+      }
+      const newBalance = prevBalance - amount;
+
+      db.serialize(() => {
+        db.run("BEGIN TRANSACTION", (beginErr) => {
+          if (beginErr) {
+            console.error("BEGIN TRANSACTION error:", beginErr);
+            return res.status(500).json({ success: false, message: "Transaction start failed" });
+          }
+
+          // update current balance
+          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBalance, currentAcc.account_id], function (updErr) {
+            if (updErr) {
+              console.error("Error updating accounts:", updErr);
+              return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update account" }));
+            }
+
+            // insert debit transaction
+            db.run(
+              `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+               VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))`,
+              [transactionId, currentAcc.account_number, amount, description, prevBalance, newBalance],
+              function (insTxErr) {
+                if (insTxErr) {
+                  console.error("Error inserting transaction:", insTxErr);
+                  return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to insert transaction" }));
+                }
+
+                // upsert expense_payments
+                db.run(
+                  `INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
+                   VALUES (?, ?, ?, ?, ?, 'Paid')
+                   ON CONFLICT(expense_id, month_year) DO UPDATE SET
+                     paid_amount = excluded.paid_amount,
+                     paid_date = excluded.paid_date,
+                     status = 'Paid'`,
+                  [expense_id, paidMonthYear, expense.amount || amount, amount, paid_date],
+                  function (upsertErr) {
+                    if (upsertErr) {
+                      console.error("Error upserting expense_payments:", upsertErr);
+                      return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to record payment" }));
+                    }
+
+                    // helper to parse employee id
+                    function parseEmployeeIdFromExpense(expenseRow, expenseTypeStr) {
+                      if (!expenseRow) return null;
+                      if (expenseRow.employee_id || expenseRow.emp_id || expenseRow.employeeId) {
+                        return (expenseRow.employee_id || expenseRow.emp_id || expenseRow.employeeId).toString().trim();
+                      }
+                      const cleaned = (expenseTypeStr || "").replace(/salary\s*[-:]?\s*/i, "").trim();
+                      const idMatch = cleaned.match(/\(([^)]+)\)/);
+                      return idMatch ? idMatch[1].trim() : null;
+                    }
+
+                    const employeeIdFromExpense = parseEmployeeIdFromExpense(expense, expenseType);
+
+                    // commit helper
+                    function commitAndRespond(optionalExtras = {}) {
+                      db.run("COMMIT", (commitErr) => {
+                        if (commitErr) {
+                          console.error("COMMIT error:", commitErr);
+                          return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to commit transaction" }));
+                        }
+
+                        // After commit: keep old behavior
+                        try {
+                          updateSalaryOnExpensePaid(expense, expenseType, paidMonthYear, amount, paid_date);
+                        } catch (e) {
+                          console.error("post-commit hook failed:", e);
+                        }
+
+                        return res.json({
+                          success: true,
+                          message: `Expense paid successfully.`,
+                          transaction_id: transactionId,
+                          previous_balance: prevBalance,
+                          updated_balance: newBalance,
+                          ...optionalExtras,
+                        });
+                      });
+                    }
+
+                    // If salary expense and employeeId found -> credit KITTY inside the same transaction
+                    if (/salary/i.test(expenseType) && employeeIdFromExpense) {
+                      // fetch insurance (safe helper)
+                      getEmployeeInsurance(employeeIdFromExpense, (gErr, insuranceAmount) => {
+                        if (gErr) {
+                          console.error("❌ failed to fetch employee insurance:", gErr);
+                          return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to fetch employee insurance" }));
+                        }
+
+                        if (!insuranceAmount || insuranceAmount <= 0) {
+                          return commitAndRespond();
+                        }
+
+                        // find KITTY account
+                        db.get(`SELECT * FROM accounts WHERE account_name LIKE '%KITTY%' LIMIT 1`, [], (kErr, kittyAcc) => {
+                          if (kErr) {
+                            console.error("❌ Error finding KITTY account:", kErr);
+                            return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to find KITTY account" }));
+                          }
+                          if (!kittyAcc) {
+                            console.error("❌ No KITTY account found");
+                            return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "KITTY account not found" }));
+                          }
+
+                          const prevKitty = parseFloat(kittyAcc.balance) || 0;
+                          const updatedKitty = prevKitty + insuranceAmount;
+
+                          db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [updatedKitty, kittyAcc.account_id], function (updKittyErr) {
+                            if (updKittyErr) {
+                              console.error("❌ Error updating KITTY balance:", updKittyErr);
+                              return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update KITTY balance" }));
+                            }
+
+                            const now2 = new Date();
+                            const hhmm2 = `${now2.getHours().toString().padStart(2, "0")}${now2
+                              .getMinutes()
+                              .toString()
+                              .padStart(2, "0")}`;
+                            const kittyTxId = `CRD|KITTY|INS|${paidMonthYear}|${hhmm2}`;
+                            const desc2 = `Insurance credit for employee ${employeeIdFromExpense}`;
+
+                            db.run(
+                              `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
+                               VALUES (?, ?, 'Credit', ?, ?, ?, ?, datetime('now'))`,
+                              [kittyTxId, kittyAcc.account_number, insuranceAmount, desc2, prevKitty, updatedKitty],
+                              function (kitTxErr) {
+                                if (kitTxErr) {
+                                  console.error("❌ Error inserting KITTY transaction:", kitTxErr);
+                                  return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to record KITTY transaction" }));
+                                }
+
+                                // success -> commit and respond with KITTY details
+                                return commitAndRespond({
+                                  kitty_credit: {
+                                    transaction_id: kittyTxId,
+                                    previous_balance: prevKitty,
+                                    updated_balance: updatedKitty,
+                                  },
+                                });
+                              }
+                            );
+                          });
+                        });
+                      });
+                    } else {
+                      // not salary or no employee id -> commit normally
+                      commitAndRespond();
+                    }
+                  } // upsert callback
+                ); // db.run upsert
+              } // insert transaction callback
+            ); // db.run insert transaction
+          } // update accounts callback
+        ); // db.run update accounts
+      }); // BEGIN
+    }); // serialize
+  }); // get expense
+});
+});
+
+
 app.get("/monthlySalary", (req, res) => {
   const query = `
     SELECT * FROM monthly_salary_payments
@@ -2369,6 +3045,173 @@ app.get("/monthlySalary", (req, res) => {
   });
 });
 
+// app.get("/getexpenses", (req, res) => {
+//   try {
+//     let { month } = req.query;
+//     if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
+
+//     if (/^\d{4}-\d{2}-\d{2}$/.test(month)) month = month.slice(0, 7);
+//     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Month must be YYYY-MM" });
+
+//     const sql = `
+// WITH params(m) AS (SELECT ? AS m),
+
+// -- Normalize expense start month
+// expenses_norm AS (
+//   SELECT 
+//     e.*,
+//     CASE 
+//       WHEN e.regular = 'Yes' THEN substr(e.raised_date,1,7)
+//       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
+//     END AS orig_ym
+//   FROM expenses e
+// ),
+
+// -- RECURSIVE MONTHS FOR regular = Yes
+// months_gen AS (
+//   -- base row
+//   SELECT 
+//     en.auto_id,
+//     en.regular,
+//     en.type,
+//     en.description,
+//     en.amount,
+//     en.currency,
+//     en.orig_ym AS month_year,
+//     en.orig_ym,
+//     en.raised_date,
+//     en.due_date AS expense_due_date,
+//     en.status AS expense_status,
+//     en.paid_date AS expense_paid_date,
+//     en.paid_amount AS expense_paid_amount
+//   FROM expenses_norm en
+//   WHERE en.regular = 'Yes'
+//     AND en.orig_ym <= (SELECT m FROM params)
+
+//   UNION ALL
+
+//   -- recursive step
+//   SELECT 
+//     mg.auto_id,
+//     mg.regular,
+//     mg.type,
+//     mg.description,
+//     mg.amount,
+//     mg.currency,
+//     CASE
+//       WHEN substr(mg.month_year,6,2) = '12'
+//         THEN printf('%04d-01', CAST(substr(mg.month_year,1,4) AS INTEGER) + 1)
+//       ELSE printf('%04d-%02d',
+//              CAST(substr(mg.month_year,1,4) AS INTEGER),
+//              CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
+//     END AS month_year,
+//     mg.orig_ym,
+//     mg.raised_date,
+//     mg.expense_due_date,
+//     mg.expense_status,
+//     mg.expense_paid_date,
+//     mg.expense_paid_amount
+//   FROM months_gen mg
+//   WHERE mg.month_year < (SELECT m FROM params)
+// ),
+
+// -- NON-RECURSIVE MONTHS FOR regular = No
+// single_months AS (
+//   SELECT 
+//     en.auto_id,
+//     en.regular,
+//     en.type,
+//     en.description,
+//     en.amount,
+//     en.currency,
+//     (SELECT m FROM params) AS month_year,
+//     en.orig_ym,
+//     en.raised_date,
+//     en.due_date AS expense_due_date,
+//     en.status AS expense_status,
+//     en.paid_date AS expense_paid_date,
+//     en.paid_amount AS expense_paid_amount
+//   FROM expenses_norm en
+//   WHERE en.regular <> 'Yes'
+//     AND (
+//          en.orig_ym = (SELECT m FROM params)
+//          OR NOT EXISTS (
+//               SELECT 1 FROM expense_payments ep
+//               WHERE ep.expense_id = en.auto_id
+//                 AND substr(ep.month_year,1,7) = en.orig_ym
+//                 AND ep.status = 'Paid'
+//          )
+//     )
+// ),
+
+// -- MERGE BOTH SOURCES
+// all_months AS (
+//   SELECT * FROM months_gen
+//   UNION ALL
+//   SELECT * FROM single_months
+// )
+
+// -- FINAL OUTPUT WITH PAYMENT JOIN + CARRY FORWARD FILTER
+// SELECT 
+//   am.*,
+//   ep.actual_amount,
+//   COALESCE(ep.paid_amount, am.expense_paid_amount) AS paid_amount,
+//   COALESCE(ep.paid_date, am.expense_paid_date) AS paid_date,
+//   COALESCE(ep.status, am.expense_status) AS payment_status,
+//   ep.due_date AS payment_due_date,
+//   ep.month_year AS payment_month
+// FROM all_months am
+// LEFT JOIN expense_payments ep
+//   ON ep.expense_id = am.auto_id
+//   AND ep.month_year IS NOT NULL
+//   AND substr(ep.month_year,1,7) = am.month_year
+
+// WHERE
+//   am.month_year = (SELECT m FROM params)
+//   OR NOT EXISTS (
+//     SELECT 1 FROM expense_payments ep2
+//     WHERE ep2.expense_id = am.auto_id
+//       AND substr(ep2.month_year,1,7) = am.month_year
+//       AND ep2.status = 'Paid'
+//   )
+
+// ORDER BY am.auto_id DESC, am.month_year DESC;
+// `;
+
+
+//     db.all(sql, [month], (err, rows) => {
+//       if (err) {
+//         console.error("DB error:", err);
+//         return res.status(500).json({ error: err.message });
+//       }
+
+//       const formatted = rows.map(row => ({
+//         id: `E${row.auto_id}`,
+//         expense_id: row.auto_id,
+//         regular: row.regular,
+//         type: row.type,
+//         description: row.description,
+//         amount: row.amount,
+//         actual_to_pay: row.actual_amount ?? null,
+//         paid_amount: row.paid_amount ?? 0,
+//         raised_date: row.raised_date,
+//         due_date: row.payment_due_date || row.expense_due_date,
+//         paid_date: row.paid_date || null,
+//         paymentstatus: row.payment_status || "Pending",
+//         expensestatus: row.expense_status || "Raised",
+//         month_year: row.expense_month
+//       }));
+
+//       res.json(formatted);
+//     });
+//   } catch (ex) {
+//     console.error("Unexpected error:", ex);
+//     res.status(500).json({ error: "Unexpected server error" });
+//   }
+// });
+
+
+
 app.get("/getexpenses", (req, res) => {
   try {
     let { month } = req.query;
@@ -2380,7 +3223,7 @@ app.get("/getexpenses", (req, res) => {
     const sql = `
 WITH params(m) AS (SELECT ? AS m),
 
--- Normalize expense start month
+-- Normalize expense start month (exclude Insurance rows)
 expenses_norm AS (
   SELECT 
     e.*,
@@ -2389,6 +3232,7 @@ expenses_norm AS (
       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
     END AS orig_ym
   FROM expenses e
+  WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')  -- <-- FILTER OUT insurance rows
 ),
 
 -- RECURSIVE MONTHS FOR regular = Yes
@@ -2502,7 +3346,6 @@ WHERE
 ORDER BY am.auto_id DESC, am.month_year DESC;
 `;
 
-
     db.all(sql, [month], (err, rows) => {
       if (err) {
         console.error("DB error:", err);
@@ -2523,7 +3366,7 @@ ORDER BY am.auto_id DESC, am.month_year DESC;
         paid_date: row.paid_date || null,
         paymentstatus: row.payment_status || "Pending",
         expensestatus: row.expense_status || "Raised",
-        month_year: row.expense_month
+        month_year: row.month_year
       }));
 
       res.json(formatted);
@@ -2533,6 +3376,7 @@ ORDER BY am.auto_id DESC, am.month_year DESC;
     res.status(500).json({ error: "Unexpected server error" });
   }
 });
+
 
 app.post("/postexpenses", (req, res) => {
   try {
@@ -2735,20 +3579,46 @@ app.put("/updateexpense/:id", (req, res) => {
   });
 });
 
-// // 🔹 Create Account
-// app.post("/accounts", (req, res) => {
-//   const { account_number, account_name, account_type, balance } = req.body;
-//   db.run(
-//     `INSERT INTO accounts (account_number, account_name, account_type, balance)
-//      VALUES (?, ?, ?, ?)`,
-//     [account_number, account_name, account_type, balance || 0],
-//     function (err) {
-//       if (err) return res.status(400).json({ error: err.message });
-//       res.json({ id: this.lastID, message: "Account created" });
-//       console.log(req.body)
-//     }
-//   );
-// });
+// // ✅ Create Account API
+app.post("/accounts", (req, res) => {
+  const { account_number, account_name, account_type, balance } = req.body;
+
+  // Validate input
+  if (!account_number || !account_name || !account_type) {
+    return res.status(400).json({ error: "All fields are required" });
+  }
+
+  if (!["Capital", "Current","Kityy"].includes(account_type)) {
+    return res.status(400).json({ error: "Invalid account type" });
+  }
+
+  // Insert into DB
+  const sql = `
+    INSERT INTO accounts (account_number, account_name, account_type, balance)
+    VALUES (?, ?, ?, ?)
+  `;
+
+  db.run(sql, [account_number, account_name, account_type, balance || 0], function (err) {
+    if (err) {
+      if (err.message.includes("UNIQUE constraint")) {
+        return res.status(400).json({ error: "Account number already exists" });
+      }
+      return res.status(500).json({ error: err.message });
+    }
+
+    // Respond success
+    res.status(201).json({
+      message: "✅ Account created successfully",
+      account: {
+        account_id: this.lastID,
+        account_number,
+        account_name,
+        account_type,
+        balance: balance || 0,
+      },
+    });
+  });
+});
 
 // 🔹 Get All Accounts
 app.get("/accounts", (req, res) => {
@@ -2810,190 +3680,6 @@ app.get("/accounts/:number/balance", (req, res) => {
     res.json({ account_number: req.params.number, balance: row.balance });
   });
 });
-
-// // 🔹 Add Transaction (auto-linked)
-// app.post("/transactions", (req, res) => {
-//   const { account_number, amount, description, related_module, related_id } = req.body;
-//   let type;
-
-//   if (related_module === "Invoice") type = "Incoming";
-//   else if (related_module === "Salary" || related_module === "Expense") type = "Outgoing";
-//   else type = "Transfer";
-
-//   const currentAcc = account_number;
-//   const capitalAcc = "CAP-001"; // Change to your actual capital account number
-
-//   if (type === "Outgoing") {
-//     autoTransferIfInsufficient(db, currentAcc, capitalAcc, amount, (err) => {
-//       if (err) return res.status(400).json({ error: err.message });
-//       handleTransaction();
-//     });
-//   } else {
-//     handleTransaction();
-//   }
-
-//   function handleTransaction() {
-//     db.serialize(() => {
-//       if (type === "Incoming")
-//         db.run(`UPDATE accounts SET balance = balance + ? WHERE account_number = ?`, [amount, currentAcc]);
-//       else if (type === "Outgoing")
-//         db.run(`UPDATE accounts SET balance = balance - ? WHERE account_number = ?`, [amount, currentAcc]);
-
-//       db.run(
-//         `INSERT INTO transactions (account_number, type, description, amount, related_module, related_id)
-//          VALUES (?, ?, ?, ?, ?, ?)`,
-//         [currentAcc, type, description, amount, related_module, related_id],
-//         function (err) {
-//           if (err) return res.status(400).json({ error: err.message });
-
-//           // Update related table
-//           if (related_module === "Salary") {
-//             db.run(`UPDATE monthly_salary_payments SET paid='Yes', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
-//           } else if (related_module === "Expense") {
-//             db.run(`UPDATE expense_payments SET status='Paid', paid_amount=?, paid_date=date('now') WHERE id=?`, [amount, related_id]);
-//           } else if (related_module === "Invoice") {
-//             db.run(`UPDATE invoices SET received='Yes', received_date=date('now') WHERE id=?`, [related_id]);
-//           }
-
-//           res.json({ message: "Transaction recorded", transaction_id: this.lastID });
-//         }
-//       );
-//     });
-//   }
-// });
-
-
-
-// // 🔹 Get Transaction History (Joined)
-// app.get("/transactions", (req, res) => {
-//   db.all(
-//     `
-//     SELECT t.transaction_id, t.account_number, t.type, t.amount, t.description,
-//            t.related_module, t.related_id, t.created_at,
-//            CASE
-//              WHEN t.related_module = 'Salary' THEN s.employee_name
-//              WHEN t.related_module = 'Expense' THEN e.type
-//              WHEN t.related_module = 'Invoice' THEN i.client_name
-//            END AS related_party
-//     FROM transactions t
-//     LEFT JOIN monthly_salary_payments s ON t.related_id = s.id AND t.related_module = 'Salary'
-//     LEFT JOIN expenses e ON t.related_id = e.auto_id AND t.related_module = 'Expense'
-//     LEFT JOIN invoices i ON t.related_id = i.id AND t.related_module = 'Invoice'
-//     ORDER BY t.created_at DESC
-//     `,
-//     [],
-//     (err, rows) => {
-//       if (err) return res.status(500).json({ error: err.message });
-//       res.json(rows);
-//     }
-//   );
-// });
-
-
-
-// // ✅ Create Account API
-app.post("/accounts", (req, res) => {
-  const { account_number, account_name, account_type, balance } = req.body;
-
-  // Validate input
-  if (!account_number || !account_name || !account_type) {
-    return res.status(400).json({ error: "All fields are required" });
-  }
-
-  if (!["Capital", "Current","Kityy"].includes(account_type)) {
-    return res.status(400).json({ error: "Invalid account type" });
-  }
-
-  // Insert into DB
-  const sql = `
-    INSERT INTO accounts (account_number, account_name, account_type, balance)
-    VALUES (?, ?, ?, ?)
-  `;
-
-  db.run(sql, [account_number, account_name, account_type, balance || 0], function (err) {
-    if (err) {
-      if (err.message.includes("UNIQUE constraint")) {
-        return res.status(400).json({ error: "Account number already exists" });
-      }
-      return res.status(500).json({ error: err.message });
-    }
-
-    // Respond success
-    res.status(201).json({
-      message: "✅ Account created successfully",
-      account: {
-        account_id: this.lastID,
-        account_number,
-        account_name,
-        account_type,
-        balance: balance || 0,
-      },
-    });
-  });
-});
-
-// // ✅ Create Account API
-// app.post("/accounts", (req, res) => {
-//   const { account_number, account_name, account_type, balance } = req.body;
-
-//   // Validate input
-//   if (!account_number || !account_name || !account_type) {
-//     return res.status(400).json({ error: "All fields are required" });
-//   }
-
-//   if (!["Capital", "Current"].includes(account_type)) {
-//     return res.status(400).json({ error: "Invalid account type" });
-//   }
-
-//   // Insert into DB
-//   const sql = `
-//     INSERT INTO accounts (account_number, account_name, account_type, balance)
-//     VALUES (?, ?, ?, ?)
-//   `;
-
-//   db.run(sql, [account_number, account_name, account_type, balance || 0], function (err) {
-//     if (err) {
-//       if (err.message.includes("UNIQUE constraint")) {
-//         return res.status(400).json({ error: "Account number already exists" });
-//       }
-//       return res.status(500).json({ error: err.message });
-//     }
-
-//     // Respond success
-//     res.status(201).json({
-//       message: "✅ Account created successfully",
-//       account: {
-//         account_id: this.lastID,
-//         account_number,
-//         account_name,
-//         account_type,
-//         balance: balance || 0,
-//       },
-//     });
-//   });
-// });
-
-// PATCH: Add balance
-
-
-// app.patch("/accounts/:number/add-balance", (req, res) => {
-//   const { amount } = req.body;
-//   const { number } = req.params;
-
-//   if (!amount || amount <= 0)
-//     return res.status(400).json({ error: "Invalid amount" });
-
-//   db.run(
-//     `UPDATE accounts SET balance = balance + ? WHERE account_number = ?`,
-//     [amount, number],
-//     function (err) {
-//       if (err) return res.status(500).json({ error: err.message });
-//       if (this.changes === 0)
-//         return res.status(404).json({ error: "Account not found" });
-//       res.json({ message: "Balance updated successfully" });
-//     }
-//   );
-// });
 
 
 app.patch("/accounts/:number/add-balance", (req, res) => {
@@ -3065,203 +3751,6 @@ app.patch("/accounts/:number/add-balance", (req, res) => {
     }
   );
 });
-
-// // 🔹 Transfer money between accounts
-// app.post("/accounts/transfer", (req, res) => {
-//   const { from_account, to_account, amount, description } = req.body;
-
-//   if (!from_account || !to_account || !amount || amount <= 0) {
-//     return res.status(400).json({ error: "Invalid transfer details" });
-//   }
-
-//   if (from_account === to_account) {
-//     return res.status(400).json({ error: "Cannot transfer to the same account" });
-//   }});
-
-// // PATCH: Add balance
-// app.patch("/accounts/:number/add-balance", (req, res) => {
-//   const { amount } = req.body;
-//   const { number } = req.params;
-
-//   if (!amount || amount <= 0)
-//     return res.status(400).json({ error: "Invalid amount" });
-
-//   db.run(
-//     `UPDATE accounts SET balance = balance + ? WHERE account_number = ?`,
-//     [amount, number],
-//     function (err) {
-//       if (err) return res.status(500).json({ error: err.message });
-//       if (this.changes === 0)
-//         return res.status(404).json({ error: "Account not found" });
-//       res.json({ message: "Balance updated successfully" });
-//     }
-//   );
-// });
-
-// // 🔹 Transfer money between accounts
-// app.post("/accounts/transfer", (req, res) => {
-//   const { from_account, to_account, amount, description } = req.body;
-
-//   if (!from_account || !to_account || !amount || amount <= 0) {
-//     return res.status(400).json({ error: "Invalid transfer details" });
-//   }
-
-//   if (from_account === to_account) {
-//     return res.status(400).json({ error: "Cannot transfer to the same account" });
-//   }
-
-//   db.serialize(() => {
-//     // 1️⃣ Check balance of sender
-//     db.get(
-//       `SELECT balance FROM accounts WHERE account_number = ?`,
-//       [from_account],
-//       (err, sender) => {
-//         if (err) return res.status(500).json({ error: err.message });
-//         if (!sender) return res.status(404).json({ error: "Sender not found" });
-
-//         if (sender.balance < amount) {
-//           return res.status(400).json({ error: "Insufficient balance" });
-//         }
-
-//         // 2️⃣ Deduct from sender
-//         db.run(
-//           `UPDATE accounts SET balance = balance - ? WHERE account_number = ?`,
-//           [amount, from_account],
-//           function (err) {
-//             if (err) return res.status(500).json({ error: err.message });
-
-//             // 3️⃣ Add to receiver
-//             db.run(
-//               `UPDATE accounts SET balance = balance + ? WHERE account_number = ?`,
-//               [amount, to_account],
-//               function (err) {
-//                 if (err) return res.status(500).json({ error: err.message });
-
-//                 // 4️⃣ Record in transactions table for both
-//                 const desc = description || `Transfer from ${from_account} to ${to_account}`;
-//                 const now = new Date().toISOString();
-
-//                 const stmt = db.prepare(`
-//                   INSERT INTO transactions (account_number, type, description, amount, related_module, created_at)
-//                   VALUES (?, ?, ?, ?, 'Transfer', ?)
-//                 `);
-
-//                 stmt.run(from_account, "Outgoing", desc, amount, now);
-//                 stmt.run(to_account, "Incoming", desc, amount, now);
-//                 stmt.finalize();
-
-//                 res.json({
-//                   message: " Transfer successful",
-//                   details: { from_account, to_account, amount },
-//                 });
-//               }
-//             );
-//           }
-//         );
-//       }
-//     );
-//   });
-// });
-
-// 🔹 Transfer money between accounts (updated - no related_module / related_id)
-// app.post("/accounts/transfer", (req, res) => {
-//   const { from_account, to_account, amount, description } = req.body;
-
-//   if (!from_account || !to_account || !amount || amount <= 0) {
-//     return res.status(400).json({ error: "Invalid transfer details" });
-//   }
-//   if (from_account === to_account) {
-//     return res.status(400).json({ error: "Cannot transfer to the same account" });
-//   }
-
-//   db.serialize(() => {
-//     db.get(
-//       `SELECT balance FROM accounts WHERE account_number = ?`,
-//       [from_account],
-//       (err, senderRow) => {
-//         if (err) return res.status(500).json({ error: err.message });
-//         if (!senderRow) return res.status(404).json({ error: "Sender not found" });
-
-//         if (senderRow.balance < amount) {
-//           return res.status(400).json({ error: "Insufficient balance" });
-//         }
-
-//         // Get receiver balance (to compute updated balance)
-//         db.get(`SELECT balance FROM accounts WHERE account_number = ?`, [to_account], (err, recvRow) => {
-//           if (err) return res.status(500).json({ error: err.message });
-//           if (!recvRow) return res.status(404).json({ error: "Receiver not found" });
-
-//           const now = new Date().toISOString();
-//           const desc = description || `Transfer from ${from_account} to ${to_account}`;
-
-//           const senderPrev = Number(senderRow.balance || 0);
-//           const senderUpdated = senderPrev - Number(amount);
-
-//           const recvPrev = Number(recvRow.balance || 0);
-//           const recvUpdated = recvPrev + Number(amount);
-
-//           db.run("BEGIN TRANSACTION");
-//           // update sender balance
-//           db.run(
-//             `UPDATE accounts SET balance = ? WHERE account_number = ?`,
-//             [senderUpdated, from_account],
-//             function (err) {
-//               if (err) {
-//                 db.run("ROLLBACK");
-//                 return res.status(500).json({ error: err.message });
-//               }
-
-//               // update receiver balance
-//               db.run(
-//                 `UPDATE accounts SET balance = ? WHERE account_number = ?`,
-//                 [recvUpdated, to_account],
-//                 function (err) {
-//                   if (err) {
-//                     db.run("ROLLBACK");
-//                     return res.status(500).json({ error: err.message });
-//                   }
-
-//                   // insert transaction rows (no related_module / related_id)
-//                   const insertSql = `
-//                     INSERT INTO transactions
-//                       (account_number, type, description, amount, previous_balance, updated_balance, created_at)
-//                     VALUES (?, ?, ?, ?, ?, ?, ?)
-//                   `;
-
-//                   // Sender record: debit
-//                   db.run(insertSql, [from_account, "Debit", desc, amount, senderPrev, senderUpdated, now], function (err) {
-//                     if (err) {
-//                       db.run("ROLLBACK");
-//                       return res.status(500).json({ error: err.message });
-//                     }
-
-//                     // Receiver record: credit
-//                     db.run(insertSql, [to_account, "Credit", desc, amount, recvPrev, recvUpdated, now], function (err) {
-//                       if (err) {
-//                         db.run("ROLLBACK");
-//                         return res.status(500).json({ error: err.message });
-//                       }
-
-//                       db.run("COMMIT", (commitErr) => {
-//                         if (commitErr) {
-//                           return res.status(500).json({ error: commitErr.message });
-//                         }
-//                         return res.json({
-//                           message: "Transfer successful",
-//                           details: { from_account, to_account, amount }
-//                         });
-//                       });
-//                     });
-//                   });
-//                 }
-//               );
-//             }
-//           );
-//         });
-//       }
-//     );
-//   });
-// });
 
 const crypto = require('crypto'); // at top of file
 
