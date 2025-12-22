@@ -84,6 +84,9 @@ db.run(
   poNumber TEXT,
   purchaseOrder TEXT,
   purchaseOrderValue REAL,
+   isFixed TEXT DEFAULT 'No',     -- ✅ FIX 1
+  startMonth TEXT,
+  milestones TEXT,  
   active TEXT CHECK(active IN ('Yes','No')),
   invoiceCycle TEXT CHECK(invoiceCycle IN ('Monthly', 'Quarterly')),
   FOREIGN KEY (clientID) REFERENCES Clients(id) ON DELETE CASCADE
@@ -285,20 +288,6 @@ function generateMonthRange(start, end) {
 }
 
 
-function generateMonthRange(start, end) {
-  const startDate = new Date(start + "-01");
-  const endDate = new Date(end + "-01");
-  const months = [];
- 
-  while (startDate <= endDate) {
-    months.push(startDate.toISOString().slice(0, 7));
-    startDate.setMonth(startDate.getMonth() + 1);
-  }
- 
-  return months;
-}
-
-
 function runQuery(query) {
   return new Promise((resolve, reject) => {
     db.all(query, (err, rows) => {
@@ -319,6 +308,17 @@ app.get("/getclients", (req, res) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
+});
+app.get("/getclient/:id", (req, res) => {
+  db.get(
+    "SELECT * FROM ClientsTable WHERE id = ?",
+    [req.params.id],
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: "Client not found" });
+      res.json(row);
+    }
+  );
 });
 
 // POST add client
@@ -392,6 +392,95 @@ function getUniqueProjectID(db, clientID, projectName, callback) {
   });
 }
 
+// app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
+//   const {
+//     clientID,
+//     startDate,
+//     endDate,
+//     projectName,
+//     projectDescription,
+//     skill,
+//     projectLocation,
+//     spoc,
+//     mailID,
+//     mobileNo,
+//     billingType,
+//     billRate,
+//     monthlyBilling,
+//     gst,tds,netPayable,
+//     employees, // ✅ from frontend as JSON
+//     hoursOrDays,
+//     poNumber,
+//     purchaseOrderValue,
+//     active,
+//     invoiceCycle,
+//   } = req.body;
+
+//   const purchaseOrderFile = req.file ? req.file.filename : null;
+
+//   getUniqueProjectID(db, clientID, projectName, (err, uniqueID) => {
+//     if (err) {
+//       console.error("Error generating projectID:", err);
+//       return res.status(500).json({ error: "Failed to generate project ID" });
+//     }
+
+//     let employeesData = [];
+//     try {
+//       employeesData = typeof employees === "string" ? JSON.parse(employees) : employees;
+//     } catch (e) {
+//       console.error("Error parsing employees JSON:", e);
+//     }
+
+//     const query = `
+//       INSERT INTO Projects (
+//         projectID, clientID, startDate, endDate, projectName, projectDescription,
+//         skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate,
+//         monthlyBilling,gst,tds,netPayable, employees,hoursOrDays, poNumber, purchaseOrder, purchaseOrderValue,
+//         active, invoiceCycle
+//       )
+//       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
+//     `;
+
+//     db.run(
+//       query,
+//       [
+//         uniqueID,
+//         clientID,
+//         startDate,
+//         endDate,
+//         projectName,
+//         projectDescription,
+//         skill,
+//         projectLocation,
+//         spoc,
+//         mailID,
+//         mobileNo,
+//         billingType,
+//         billRate,
+//         monthlyBilling,
+//         gst,tds,netPayable,
+//         JSON.stringify(employeesData), // ✅ store JSON
+//         hoursOrDays,
+//         poNumber,
+//         purchaseOrderFile,
+//         purchaseOrderValue,
+//         active,
+//         invoiceCycle,
+//       ],
+//       function (err) {
+//         if (err) {
+//           console.error("DB Error:", err.message);
+//           return res.status(500).json({ error: err.message });
+//         }
+//         res.json({ projectID: uniqueID, message: "Project added successfully" });
+//       }
+//     );
+//   });
+// });
+
+
+// -------- GET PROJECTS API --------
+
 app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
   const {
     clientID,
@@ -407,38 +496,75 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
     billingType,
     billRate,
     monthlyBilling,
-    gst,tds,netPayable,
-    employees, // ✅ from frontend as JSON
+    gst,
+    tds,
+    netPayable,
+    employees,
     hoursOrDays,
     poNumber,
     purchaseOrderValue,
     active,
     invoiceCycle,
+
+    // ✅ Fixed project fields
+    isFixed,
+    startMonth,   // 🔹 optional now
+    milestones,
   } = req.body;
 
   const purchaseOrderFile = req.file ? req.file.filename : null;
 
+  if (!clientID || !projectName) {
+    return res.status(400).json({
+      error: "Client and Project Name are required",
+    });
+  }
+
   getUniqueProjectID(db, clientID, projectName, (err, uniqueID) => {
     if (err) {
-      console.error("Error generating projectID:", err);
       return res.status(500).json({ error: "Failed to generate project ID" });
     }
 
+    /* ===============================
+       🔹 Parse employees
+    =============================== */
     let employeesData = [];
     try {
-      employeesData = typeof employees === "string" ? JSON.parse(employees) : employees;
-    } catch (e) {
-      console.error("Error parsing employees JSON:", e);
+      employeesData =
+        typeof employees === "string" ? JSON.parse(employees) : employees || [];
+    } catch {
+      employeesData = [];
+    }
+
+    /* ===============================
+       🔹 Parse milestones (only if Fixed)
+    =============================== */
+    let milestonesData = [];
+
+    if (isFixed === "Yes") {
+      try {
+        milestonesData =
+          typeof milestones === "string"
+            ? JSON.parse(milestones)
+            : milestones || [];
+      } catch {
+        milestonesData = [];
+      }
     }
 
     const query = `
       INSERT INTO Projects (
-        projectID, clientID, startDate, endDate, projectName, projectDescription,
-        skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate,
-        monthlyBilling,gst,tds,netPayable, employees,hoursOrDays, poNumber, purchaseOrder, purchaseOrderValue,
-        active, invoiceCycle
+        projectID, clientID, startDate, endDate,
+        projectName, projectDescription, skill, projectLocation,
+        spoc, mailID, mobileNo,
+        billingType, billRate, monthlyBilling,
+        gst, tds, netPayable,
+        employees, hoursOrDays,
+        poNumber, purchaseOrder, purchaseOrderValue,
+        active, invoiceCycle,
+        isFixed, startMonth, milestones
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
     db.run(
@@ -446,60 +572,117 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
       [
         uniqueID,
         clientID,
-        startDate,
-        endDate,
+        startDate || null,
+        endDate || null,
         projectName,
-        projectDescription,
-        skill,
-        projectLocation,
-        spoc,
-        mailID,
-        mobileNo,
-        billingType,
-        billRate,
-        monthlyBilling,
-        gst,tds,netPayable,
-        JSON.stringify(employeesData), // ✅ store JSON
-        hoursOrDays,
-        poNumber,
+        projectDescription || "",
+        skill || "",
+        projectLocation || "",
+        spoc || "",
+        mailID || "",
+        mobileNo || "",
+        billingType || "",
+        billRate || 0,
+        monthlyBilling || 0,
+        gst || 0,
+        tds || 0,
+        netPayable || 0,
+        JSON.stringify(employeesData),
+        hoursOrDays || 0,
+        poNumber || "NA",
         purchaseOrderFile,
-        purchaseOrderValue,
-        active,
-        invoiceCycle,
+        purchaseOrderValue || "NA",
+        active || "Yes",
+        invoiceCycle || "Monthly",
+
+        // ✅ Fixed project (safe defaults)
+        isFixed || "No",
+        startMonth || null,                // ✅ optional
+        JSON.stringify(milestonesData),    // ✅ always JSON
       ],
       function (err) {
         if (err) {
-          console.error("DB Error:", err.message);
+          console.error("❌ Add Project Error:", err.message);
           return res.status(500).json({ error: err.message });
         }
-        res.json({ projectID: uniqueID, message: "Project added successfully" });
+
+        res.json({
+          success: true,
+          projectID: uniqueID,
+          message: "Project added successfully",
+        });
       }
     );
   });
 });
 
 
-// -------- GET PROJECTS API --------
+// app.get("/getprojects", (req, res) => {
+//   db.all("SELECT * FROM Projects", [], (err, rows) => {
+//     if (err) return res.status(500).json({ error: err.message });
+
+//     db.all("SELECT employee_id, employee_name FROM employees", [], (err, emps) => {
+//       if (err) return res.status(500).json({ error: err.message });
+
+//       const map = new Map(emps.map(e => [e.employee_id, e.employee_name]));
+//       const formatted = rows.map(row => {
+//         let parsed = [];
+//         try {
+//           const arr = JSON.parse(row.employees || "[]");
+//           parsed = arr.map(emp => ({
+//             id: typeof emp === "string" ? emp : emp.id,
+//             name: typeof emp === "string" ? map.get(emp) : emp.name,
+//           }));
+//         } catch {
+//           parsed = [];
+//         }
+//         return { ...row, employees: parsed };
+//       });
+
+//       res.json(formatted);
+//     });
+//   });
+// });
+
+
 app.get("/getprojects", (req, res) => {
   db.all("SELECT * FROM Projects", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    db.all("SELECT employee_id, employee_name FROM employees", [], (err, emps) => {
-      if (err) return res.status(500).json({ error: err.message });
+    db.all("SELECT employee_id, employee_name FROM employees", [], (err2, emps) => {
+      if (err2) return res.status(500).json({ error: err2.message });
 
-      const map = new Map(emps.map(e => [e.employee_id, e.employee_name]));
+      const empMap = new Map(emps.map(e => [e.employee_id, e.employee_name]));
+
       const formatted = rows.map(row => {
-        let parsed = [];
+        let employees = [];
         try {
           const arr = JSON.parse(row.employees || "[]");
-          parsed = arr.map(emp => ({
+          employees = arr.map(emp => ({
             id: typeof emp === "string" ? emp : emp.id,
-            name: typeof emp === "string" ? map.get(emp) : emp.name,
+            name:
+              typeof emp === "string"
+                ? empMap.get(emp) || emp
+                : emp.name,
           }));
         } catch {
-          parsed = [];
+          employees = [];
         }
-        return { ...row, employees: parsed };
+
+        let milestones = [];
+        try {
+          milestones = row.milestones
+            ? JSON.parse(row.milestones)
+            : [];
+        } catch {
+          milestones = [];
+        }
+
+        return {
+          ...row,
+          employees,
+          milestones,
+        };
       });
 
       res.json(formatted);
@@ -509,8 +692,7 @@ app.get("/getprojects", (req, res) => {
 
 
 // POST API (add new employee)
-app.post(
-  "/postemployees",
+app.post("/postemployees",
   upload.fields([{ name: "resume" }, { name: "photo" }]),
   (req, res) => {
     const {
@@ -1014,7 +1196,151 @@ app.get("/transactions/:forecastId", (req, res) => {
   });
 });
 
+
+
 // Post Invoices and GST Expense Adding
+// app.post("/invoices", (req, res) => {
+//   const {
+//     invoice_number,
+//     invoice_date,
+//     client_name,
+//     project_id,
+//     start_date,
+//     end_date,
+//     invoice_cycle,
+//     invoice_value,
+//     gst_amount,
+//     due_date,
+//     billable_days,
+//     non_billable_days,
+//     received,
+//     received_date
+//   } = req.body;
+  
+
+//   // Step 1: Get client's paymentTerms
+//   db.get(
+//     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
+//     [client_name],
+//     (err, client) => {
+//       if (err) return res.status(500).json({ error: "Error fetching client data" });
+//       if (!client) return res.status(400).json({ error: "Client not found" });
+
+//       const paymentTerms = client.paymentTerms || 0;
+
+//       // Calculate due_date if missing
+//       let finalDueDate = due_date;
+//       if (!finalDueDate || finalDueDate.trim() === "") {
+//         const d = new Date(invoice_date);
+//         d.setDate(d.getDate() + paymentTerms + 2);
+//         finalDueDate = d.toISOString().split("T")[0];
+//       }
+
+//       // Step 2: Insert Invoice
+//       const sql = `
+//         INSERT INTO invoices (
+//           invoice_number, invoice_date, client_name, project_id,
+//           start_date, end_date, invoice_cycle, invoice_value,
+//           gst_amount, due_date, billable_days, non_billable_days, received, received_date
+//         )
+//         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//       `;
+
+//       db.run(
+//         sql,
+//         [
+//           invoice_number,
+//           invoice_date,
+//           client_name,
+//           project_id,
+//           start_date,
+//           end_date,
+//           invoice_cycle,
+//           invoice_value,
+//           gst_amount,
+//           finalDueDate,
+//           billable_days,
+//           non_billable_days,
+//           received || "No",
+//           received_date || null
+//         ],
+//         function (err) {
+//           if (err) {
+//             console.error("Insert error:", err);
+//             return res.status(500).json({ error: err.message });
+//           }
+
+//           const invoiceId = this.lastID;
+
+//           // =====================================
+//           // Step 3: Insert GST Expense Automatically
+//           // =====================================
+
+//           const raisedDate = new Date(invoice_date);
+
+// // Convert raisedDate to YYYY-MM-DD
+// const formattedRaisedDate = raisedDate.toISOString().split("T")[0];
+
+// // Get next month of raised date
+// const nextMonth = new Date(
+//   raisedDate.getFullYear(),
+//   raisedDate.getMonth() + 1,
+//   20
+// );
+// const gstDueDate = nextMonth.toISOString().split("T")[0];
+
+//           const expSql = `
+//             INSERT INTO expenses (
+//               regular, type, description, amount, currency, 
+//               raised_date, due_date, paid_date, paid_amount, 
+//               Active, status
+//             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//           `;
+
+//           const descriptionText = `GST for Invoice ${invoice_number} from ${start_date} to ${end_date}`;
+
+//           db.run(
+//             expSql,
+//             [
+//               "No",
+//               "GST",
+//               descriptionText,
+//               gst_amount,
+//               "INR",
+//               formattedRaisedDate,
+//               gstDueDate,
+//               null,
+//               null,
+//               "Yes",
+//               "Raised"
+//             ],
+//             function (expErr) {
+//               if (expErr) {
+//                 console.error("Expense Insert Error:", expErr);
+//                 return res.status(500).json({ error: expErr.message });
+//               }
+
+//               // FINAL RESPONSE
+//               res.json({
+//                 success: true,
+//                 invoice_id: invoiceId,
+//                 expense_id: this.lastID,
+//                 message: "Invoice and GST expense saved successfully"
+//               });
+//             }
+//           );
+//         }
+//       );
+//     }
+//   );
+// });
+
+// ===============================
+// POST INVOICE + AUTO GST EXPENSE
+// ===============================
+
+
+//17th
 app.post("/invoices", (req, res) => {
   const {
     invoice_number,
@@ -1030,10 +1356,10 @@ app.post("/invoices", (req, res) => {
     billable_days,
     non_billable_days,
     received,
-    received_date
+    received_date,
   } = req.body;
 
-  // Step 1: Get client's paymentTerms
+  // STEP 1: Get Client Payment Terms
   db.get(
     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
     [client_name],
@@ -1043,112 +1369,77 @@ app.post("/invoices", (req, res) => {
 
       const paymentTerms = client.paymentTerms || 0;
 
-      // Calculate due_date if missing
+      // Auto-calc due date
       let finalDueDate = due_date;
-      if (!finalDueDate || finalDueDate.trim() === "") {
+      if (!finalDueDate) {
         const d = new Date(invoice_date);
         d.setDate(d.getDate() + paymentTerms + 2);
         finalDueDate = d.toISOString().split("T")[0];
       }
 
-      // Step 2: Insert Invoice
-      const sql = `
-        INSERT INTO invoices (
-          invoice_number, invoice_date, client_name, project_id,
-          start_date, end_date, invoice_cycle, invoice_value,
-          gst_amount, due_date, billable_days, non_billable_days, received, received_date
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `;
+      // STEP 2: Get Project
+      db.get(
+        "SELECT isFixed, invoiceCycle FROM Projects WHERE projectID = ?",
+        [project_id],
+        (err, project) => {
+          if (err) return res.status(500).json({ error: "Error fetching project" });
+          if (!project) return res.status(400).json({ error: "Project not found" });
 
-      db.run(
-        sql,
-        [
-          invoice_number,
-          invoice_date,
-          client_name,
-          project_id,
-          start_date,
-          end_date,
-          invoice_cycle,
-          invoice_value,
-          gst_amount,
-          finalDueDate,
-          billable_days,
-          non_billable_days,
-          received || "No",
-          received_date || null
-        ],
-        function (err) {
-          if (err) {
-            console.error("Insert error:", err);
-            return res.status(500).json({ error: err.message });
-          }
+          // ✅ STEP 3: Decide FINAL invoice cycle (CORRECT PLACE)
+          const finalInvoiceCycle =
+            project.isFixed === "Yes"
+              ? project.invoiceCycle || "Monthly"
+              : invoice_cycle || project.invoiceCycle || "Monthly";
 
-          const invoiceId = this.lastID;
-
-          // =====================================
-          // Step 3: Insert GST Expense Automatically
-          // =====================================
-
-          const raisedDate = new Date(invoice_date);
-
-// Convert raisedDate to YYYY-MM-DD
-const formattedRaisedDate = raisedDate.toISOString().split("T")[0];
-
-// Get next month of raised date
-const nextMonth = new Date(
-  raisedDate.getFullYear(),
-  raisedDate.getMonth() + 1,
-  20
-);
-const gstDueDate = nextMonth.toISOString().split("T")[0];
-
-          // const raisedDate = new Date(invoice_date);
- 
-          //  // Get next month of raised date
-          //  const nextMonth = new Date(raisedDate.getFullYear(), raisedDate.getMonth() + 1, 20);
-           
-          //  // Format to YYYY-MM-DD
-          //  const gstDueDate = nextMonth.toISOString().split("T")[0];
- 
-          const expSql = `
-            INSERT INTO expenses (
-              regular, type, description, amount, currency, 
-              raised_date, due_date, paid_date, paid_amount, 
-              Active, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          // STEP 4: Insert Invoice
+          const sql = `
+            INSERT INTO invoices (
+              invoice_number,
+              invoice_date,
+              client_name,
+              project_id,
+              start_date,
+              end_date,
+              invoice_cycle,
+              invoice_value,
+              gst_amount,
+              due_date,
+              billable_days,
+              non_billable_days,
+              received,
+              received_date
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `;
 
-          const descriptionText = `GST for Invoice ${invoice_number} from ${start_date} to ${end_date}`;
-
           db.run(
-            expSql,
+            sql,
             [
-              "No",
-              "GST",
-              descriptionText,
+              invoice_number,
+              invoice_date,
+              client_name,
+              project_id,
+              start_date,
+              end_date,
+              finalInvoiceCycle, // ✅ FIXED
+              invoice_value,
               gst_amount,
-              "INR",
-              formattedRaisedDate,
-              gstDueDate,
-              null,
-              null,
-              "Yes",
-              "Raised"
+              finalDueDate,
+              billable_days,
+              non_billable_days,
+              received || "No",
+              received_date || null,
             ],
-            function (expErr) {
-              if (expErr) {
-                console.error("Expense Insert Error:", expErr);
-                return res.status(500).json({ error: expErr.message });
+            function (err) {
+              if (err) {
+                console.error("Insert error:", err);
+                return res.status(500).json({ error: err.message });
               }
 
-              // FINAL RESPONSE
               res.json({
                 success: true,
-                invoice_id: invoiceId,
-                expense_id: this.lastID,
-                message: "Invoice and GST expense saved successfully"
+                invoice_id: this.lastID,
+                message: "Invoice saved successfully",
               });
             }
           );
@@ -1159,7 +1450,304 @@ const gstDueDate = nextMonth.toISOString().split("T")[0];
 });
 
 
-// Get Invoices
+
+
+
+
+// app.post("/invoices", (req, res) => {
+//   const {
+//     invoice_number,
+//     invoice_date,
+//     client_name,
+//     project_id,
+//     start_date,
+//     end_date,
+//     invoice_cycle,
+//     invoice_value,
+//     gst_amount,
+//     due_date,
+//     billable_days,
+//     non_billable_days,
+//     received,
+//     received_date,
+
+//     // ✅ JSON-based milestone fields
+//     milestone_name,
+//     invoice_month,
+//   } = req.body;
+
+//   // -------------------------------------------------
+//   // STEP 0: Basic validation
+//   // -------------------------------------------------
+//   if (!invoice_number || !invoice_date || !client_name || !project_id) {
+//     return res.status(400).json({ error: "Missing required invoice fields" });
+//   }
+
+//   // -------------------------------------------------
+//   // STEP 1: Fetch Client Payment Terms
+//   // -------------------------------------------------
+//   db.get(
+//     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
+//     [client_name],
+//     (err, client) => {
+//       if (err) {
+//         console.error("Client fetch error:", err);
+//         return res.status(500).json({ error: "Error fetching client data" });
+//       }
+
+//       if (!client) {
+//         return res.status(400).json({ error: "Client not found" });
+//       }
+
+//       const paymentTerms = Number(client.paymentTerms) || 0;
+
+//       // -------------------------------------------------
+//       // STEP 2: Auto-calc Due Date
+//       // -------------------------------------------------
+//       let finalDueDate = due_date;
+//       if (!finalDueDate || String(finalDueDate).trim() === "") {
+//         const d = new Date(invoice_date);
+//         d.setDate(d.getDate() + paymentTerms + 2);
+//         finalDueDate = d.toISOString().slice(0, 10);
+//       }
+
+//       // -------------------------------------------------
+//       // STEP 3: Fetch Project (Fixed / Milestones)
+//       // -------------------------------------------------
+//       db.get(
+//         "SELECT isFixed, milestones FROM Projects WHERE projectID = ?",
+//         [project_id],
+//         (err, project) => {
+//           if (err) {
+//             console.error("Project fetch error:", err);
+//             return res.status(500).json({ error: "Error fetching project" });
+//           }
+
+//           if (!project) {
+//             return res.status(400).json({ error: "Project not found" });
+//           }
+
+//           const isFixed = project.isFixed === "Yes";
+
+//           // -------------------------------------------------
+//           // STEP 4: SAFE Milestone JSON Parse
+//           // -------------------------------------------------
+//           let milestones = [];
+//           try {
+//             if (
+//               project.milestones &&
+//               project.milestones !== "NA" &&
+//               project.milestones !== ""
+//             ) {
+//               milestones = JSON.parse(project.milestones);
+//             }
+//           } catch (e) {
+//             console.warn("Invalid milestone JSON, defaulting to []");
+//             milestones = [];
+//           }
+
+//           const cleanMilestoneName =
+//             typeof milestone_name === "string"
+//               ? milestone_name.trim()
+//               : "";
+
+//           const cleanInvoiceMonth =
+//             typeof invoice_month === "string"
+//               ? invoice_month.trim()
+//               : "";
+
+//           // -------------------------------------------------
+//           // STEP 5: Fixed / Time-based Validation
+//           // -------------------------------------------------
+//           if (isFixed) {
+//             if (!cleanMilestoneName) {
+//               return res.status(400).json({
+//                 error: "Milestone is required for fixed project invoice",
+//               });
+//             }
+
+//             const milestone = milestones.find(
+//               (m) => m.name === cleanMilestoneName
+//             );
+
+//             if (!milestone) {
+//               return res.status(400).json({
+//                 error: "Invalid milestone for this project",
+//               });
+//             }
+
+//             if (!cleanInvoiceMonth) {
+//               return res.status(400).json({
+//                 error: "Invoice month is required for milestone billing",
+//               });
+//             }
+//           } else {
+//             if (cleanMilestoneName) {
+//               return res.status(400).json({
+//                 error: "Milestone not allowed for time-based project",
+//               });
+//             }
+//           }
+
+//           // -------------------------------------------------
+//           // STEP 6: Prevent Duplicate Milestone Invoice
+//           // -------------------------------------------------
+//           const proceedInsert = () => insertInvoice();
+
+//           if (isFixed) {
+//             db.get(
+//               `
+//               SELECT id FROM invoices
+//               WHERE project_id = ?
+//                 AND milestone_name = ?
+//                 AND invoice_month = ?
+//               `,
+//               [project_id, cleanMilestoneName, cleanInvoiceMonth],
+//               (err, existing) => {
+//                 if (existing) {
+//                   return res.status(400).json({
+//                     error: "Invoice already raised for this milestone",
+//                   });
+//                 }
+//                 proceedInsert();
+//               }
+//             );
+//           } else {
+//             proceedInsert();
+//           }
+
+//           // =================================================
+//           // STEP 7: Insert Invoice
+//           // =================================================
+//           function insertInvoice() {
+//             const sql = `
+//               INSERT INTO invoices (
+//                 invoice_number,
+//                 invoice_date,
+//                 client_name,
+//                 project_id,
+//                 start_date,
+//                 end_date,
+//                 invoice_cycle,
+//                 invoice_value,
+//                 gst_amount,
+//                 due_date,
+//                 billable_days,
+//                 non_billable_days,
+//                 received,
+//                 received_date,
+//                 milestone_name,
+//                 invoice_month
+//               )
+//               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//             `;
+
+//             db.run(
+//               sql,
+//               [
+//                 invoice_number,
+//                 invoice_date,
+//                 client_name,
+//                 project_id,
+//                 start_date || null,
+//                 end_date || null,
+//                 invoice_cycle || null,
+//                 invoice_value || 0,
+//                 gst_amount || 0,
+//                 finalDueDate,
+//                 billable_days || 0,
+//                 non_billable_days || 0,
+//                 received || "No",
+//                 received_date || null,
+//                 cleanMilestoneName || null,
+//                 cleanInvoiceMonth || null,
+//               ],
+//               function (err) {
+//                 if (err) {
+//                   console.error("Invoice insert error:", err);
+//                   return res.status(500).json({ error: err.message });
+//                 }
+
+//                 const invoiceId = this.lastID;
+
+//                 // =================================================
+//                 // STEP 8: Insert GST Expense
+//                 // =================================================
+//                 const raisedDate = new Date(invoice_date);
+//                 const raised = raisedDate.toISOString().slice(0, 10);
+
+//                 const nextMonth = new Date(
+//                   raisedDate.getFullYear(),
+//                   raisedDate.getMonth() + 1,
+//                   20
+//                 );
+//                 const gstDueDate = nextMonth.toISOString().slice(0, 10);
+
+//                 const expSql = `
+//                   INSERT INTO expenses (
+//                     regular,
+//                     type,
+//                     description,
+//                     amount,
+//                     currency,
+//                     raised_date,
+//                     due_date,
+//                     paid_date,
+//                     paid_amount,
+//                     Active,
+//                     status
+//                   )
+//                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//                 `;
+
+//                 const descriptionText = `GST for Invoice ${invoice_number} (${project_id})`;
+
+//                 db.run(
+//                   expSql,
+//                   [
+//                     "No",
+//                     "GST",
+//                     descriptionText,
+//                     gst_amount || 0,
+//                     "INR",
+//                     raised,
+//                     gstDueDate,
+//                     null,
+//                     null,
+//                     "Yes",
+//                     "Raised",
+//                   ],
+//                   function (expErr) {
+//                     if (expErr) {
+//                       console.error("GST insert error:", expErr);
+//                       return res.status(500).json({ error: expErr.message });
+//                     }
+
+//                     // =================================================
+//                     // FINAL RESPONSE
+//                     // =================================================
+//                     res.json({
+//                       success: true,
+//                       invoice_id: invoiceId,
+//                       expense_id: this.lastID,
+//                       message:
+//                         "Invoice and GST expense saved successfully",
+//                     });
+//                   }
+//                 );
+//               }
+//             );
+//           }
+//         }
+//       );
+//     }
+//   );
+// });
+
+
+
+
+
 app.get("/invoices", (req, res) => {
   const query = "SELECT * FROM invoices ORDER BY invoice_date DESC";
 
@@ -1207,6 +1795,22 @@ app.get("/clientsprojects/:clientID", (req, res) => {
 });
 
 
+// // GET Project by ID
+// app.get("/getProject/:id", (req, res) => {
+//   const { id } = req.params;
+//   const sql = "SELECT * FROM Projects WHERE projectID = ?";
+
+//   db.get(sql, [id], (err, row) => {
+//     if (err) {
+//       return res.status(500).json({ error: err.message });
+//     }
+//     if (!row) {
+//       return res.status(404).json({ message: "Project not found" });
+//     }
+//     res.json(row);
+//   });
+// });
+
 // GET Project by ID
 app.get("/getProject/:id", (req, res) => {
   const { id } = req.params;
@@ -1219,22 +1823,107 @@ app.get("/getProject/:id", (req, res) => {
     if (!row) {
       return res.status(404).json({ message: "Project not found" });
     }
+
+    // ✅ ADD THIS BLOCK (safe)
+    try {
+      row.milestones = row.milestones
+        ? JSON.parse(row.milestones)
+        : [];
+    } catch {
+      row.milestones = [];
+    }
+
     res.json(row);
   });
 });
 
 
+// // API to fetch active projects
+// app.get("/getactive-projects", (req, res) => {
+//   const { filterMonthYear } = req.query; // e.g., "2025-09"
+
+//   // Default to current month if not provided
+//   const today = new Date();
+//   const yearMonth =
+//     filterMonthYear ||
+//     `${today.getFullYear()}-${(today.getMonth() + 1)
+//       .toString()
+//       .padStart(2, "0")}`;
+
+//   const sql = `
+//     SELECT p.*,
+//            c.clientName,
+//            i.*,
+//            COALESCE(t.total_invoice_amount, 0) AS total_invoice_amount
+//     FROM Projects p
+//     LEFT JOIN ClientsTable c ON c.id = p.clientID
+//     LEFT JOIN (
+//       SELECT *
+//       FROM invoices
+//       WHERE strftime('%Y-%m', invoice_date) = '${yearMonth}'
+//     ) i ON i.project_id = p.projectID
+//     LEFT JOIN (
+//       SELECT project_id, SUM(invoice_value) AS total_invoice_amount
+//       FROM invoices
+//       GROUP BY project_id
+//     ) t ON t.project_id = p.projectID
+//     WHERE p.active = 'Yes'
+//     ORDER BY p.projectID, i.invoice_date
+//   `;
+
+//   db.all(sql, [], (err, rows) => {
+//     if (err) {
+//       console.error("Error fetching active projects:", err.message);
+//       return res.status(500).json({ error: err.message });
+//     }
+
+//     // 🔹 Fetch employee master to map IDs → Names
+//     db.all(
+//       "SELECT employee_id, employee_name FROM employees",
+//       [],
+//       (err2, emps) => {
+//         if (err2) {
+//           console.error("Error fetching employees:", err2.message);
+//           return res.status(500).json({ error: err2.message });
+//         }
+
+//         const map = new Map(emps.map((e) => [e.employee_id, e.employee_name]));
+
+//         const formatted = rows.map((row) => {
+//           let parsed = [];
+//           try {
+//             const arr = JSON.parse(row.employees || "[]");
+//             parsed = arr.map((emp) => ({
+//               id: typeof emp === "string" ? emp : emp.id,
+//               name:
+//                 typeof emp === "string"
+//                   ? map.get(emp) || emp // fallback to ID if name missing
+//                   : emp.name,
+//             }));
+//           } catch (e) {
+//             parsed = [];
+//           }
+
+//           return {
+//             ...row,
+//             employees: parsed, // ✅ now an array, not string
+//           };
+//         });
+
+//         res.json(formatted);
+//       }
+//     );
+//   });
+// });
+
 // API to fetch active projects
 app.get("/getactive-projects", (req, res) => {
-  const { filterMonthYear } = req.query; // e.g., "2025-09"
+  const { filterMonthYear } = req.query;
 
-  // Default to current month if not provided
   const today = new Date();
   const yearMonth =
     filterMonthYear ||
-    `${today.getFullYear()}-${(today.getMonth() + 1)
-      .toString()
-      .padStart(2, "0")}`;
+    `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
   const sql = `
     SELECT p.*,
@@ -1263,36 +1952,46 @@ app.get("/getactive-projects", (req, res) => {
       return res.status(500).json({ error: err.message });
     }
 
-    // 🔹 Fetch employee master to map IDs → Names
     db.all(
       "SELECT employee_id, employee_name FROM employees",
       [],
       (err2, emps) => {
         if (err2) {
-          console.error("Error fetching employees:", err2.message);
           return res.status(500).json({ error: err2.message });
         }
 
-        const map = new Map(emps.map((e) => [e.employee_id, e.employee_name]));
+        const empMap = new Map(emps.map(e => [e.employee_id, e.employee_name]));
 
-        const formatted = rows.map((row) => {
-          let parsed = [];
+        const formatted = rows.map(row => {
+          // 🔹 Parse employees
+          let employees = [];
           try {
             const arr = JSON.parse(row.employees || "[]");
-            parsed = arr.map((emp) => ({
+            employees = arr.map(emp => ({
               id: typeof emp === "string" ? emp : emp.id,
               name:
                 typeof emp === "string"
-                  ? map.get(emp) || emp // fallback to ID if name missing
+                  ? empMap.get(emp) || emp
                   : emp.name,
             }));
-          } catch (e) {
-            parsed = [];
+          } catch {
+            employees = [];
+          }
+
+          // ✅ Parse milestones
+          let milestones = [];
+          try {
+            milestones = row.milestones
+              ? JSON.parse(row.milestones)
+              : [];
+          } catch {
+            milestones = [];
           }
 
           return {
             ...row,
-            employees: parsed, // ✅ now an array, not string
+            employees,
+            milestones,
           };
         });
 
@@ -1301,6 +2000,7 @@ app.get("/getactive-projects", (req, res) => {
     );
   });
 });
+
 
 // Prpoject without INvoice this Month
 app.get("/getprojects-no-invoice-current-month", (req, res) => {
@@ -1773,12 +2473,12 @@ app.put("/updateinvoices/:id", (req, res) => {
           ).padStart(2, "0")}`;
 
           if (received === "Yes") {
-            transactionId = `CRD|${invoiceNumber}|${timestamp}`;
+            transactionId = `T${invoiceNumber}|${timestamp}`;
             type = "Credit";
             description = `Payment received for invoice ${invoiceNumber}`;
             updatedBalance = previousBalance + amount;
           } else {
-            transactionId = `DED|${invoiceNumber}|${timestamp}`;
+            transactionId = `T${invoiceNumber}|${timestamp}`;
             type = "Debit";
             description = `Payment reversed for invoice ${invoiceNumber}`;
             updatedBalance = previousBalance - amount;
@@ -1855,107 +2555,6 @@ app.put("/updateinvoices/:id", (req, res) => {
     });
   });
 });
-
-
-
-// app.post("/monthlySalary/save", (req, res) => {
-//   const { empId, empName, paid, month, lop, paidAmount, actualToPay } = req.body;
-
-//   if (!empId || !empName || !month) {
-//     return res.status(400).json({ success: false, message: "Missing required fields" });
-//   }
-
-//   // 1️⃣ Save salary record
-//   db.run(
-//     `
-//     INSERT INTO monthly_salary_payments 
-//     (employee_id, employee_name, paid, month, lop, paid_amount, actual_to_pay)
-//     VALUES (?, ?, ?, ?, ?, ?, ?)
-//     `,
-//     [empId, empName, paid, month, lop, paidAmount, actualToPay],
-//     function (err) {
-//       if (err) {
-//         console.error("Error saving salary:", err);
-//         return res.status(500).json({ success: false, message: "Database error" });
-//       }
-
-//       const salaryId = this.lastID;
-
-// app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
-//   const { employeeId, month } = req.params;
-//   const { paid, lop, paidAmount, actualToPay } = req.body;
-
-//   if (!paid || !month) {
-//     return res.status(400).json({
-//       success: false,
-//       message: "Paid status and month are required",
-//     });
-//   }
-
-//   const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
-
-//   const query = `
-//     UPDATE monthly_salary_payments
-//     SET 
-//       paid = ?, 
-//       lop = ?, 
-//       paid_amount = ?, 
-//       actual_to_pay = ?, 
-//       paid_date = ?
-//     WHERE employee_id = ? AND month = ?
-//   `;
-
-//   db.run(
-//     query,
-//     [
-//       paid,
-//       lop || 0,
-//       paidAmount || 0,
-//       actualToPay || 0,
-//       paidDate,
-//       employeeId,
-//       month,
-//     ],
-//     function (err) {
-//       if (err) {
-//         console.error("❌ Error updating salary:", err);
-//         return res.status(500).json({
-//           success: false,
-//           message: "Database update failed",
-//         });
-//       }
-
-//       if (this.changes === 0) {
-//         return res.status(404).json({
-//           success: false,
-//           message: "No salary record found for this employee and month",
-//         });
-//       }
-
-//       // ============================================================
-//       // 🔥 CALL FUNCTION TO ALSO UPDATE expense_payments
-//       // ============================================================
-//       if (paid === "Yes") {
-//         updateExpensePaymentOnSalaryPaid(employeeId, month, paidAmount, paidDate);
-//       }
-
-//       return res.json({
-//         success: true,
-//         message: "Salary updated successfully",
-//       });
-//     }
-//   );
-// });
-// Replace existing route with this atomic version
-
-
-
-
-
-
-
-//HERE I WILL UPDATE THE CODE TODAY
-
 
 /* =========================
    Helpers
@@ -2119,190 +2718,6 @@ function updateSalaryOnExpensePaid(expense, expenseType, month_year, paidAmount,
     });
   });
 }
-
-
-/* =========================
-   PUT /monthlySalary/update/:employeeId/:month
-   (atomic: update monthly_salary_payments, update expense_payments if expense exists, credit KITTY)
-   ========================= */
-// app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
-//   const { employeeId, month } = req.params;
-//   const { paid, lop, paidAmount, actualToPay } = req.body;
-
-//   if (!paid || !month) {
-//     return res.status(400).json({ success: false, message: "Paid status and month are required" });
-//   }
-
-//   const paidDate = paid === "Yes" ? new Date().toISOString().slice(0, 10) : null;
-//   const lopVal = Number(lop || 0);
-//   const paidAmtVal = Number(paidAmount || 0);
-//   const actualToPayVal = Number(actualToPay || paidAmtVal || 0);
-
-//   if (paid === "Yes" && (Number.isNaN(paidAmtVal) || paidAmtVal < 0)) {
-//     return res.status(400).json({ success: false, message: "Invalid paidAmount" });
-//   }
-
-//   db.serialize(() => {
-//     db.run("BEGIN TRANSACTION", (beginErr) => {
-//       if (beginErr) {
-//         console.error("BEGIN TRANSACTION error:", beginErr);
-//         return res.status(500).json({ success: false, message: "Transaction start failed" });
-//       }
-
-//       const updateSalarySql = `
-//         UPDATE monthly_salary_payments
-//         SET paid = ?, lop = ?, paid_amount = ?, actual_to_pay = ?, paid_date = ?
-//         WHERE employee_id = ? AND month = ?
-//       `;
-//       db.run(updateSalarySql, [paid, lopVal, paidAmtVal, actualToPayVal, paidDate, employeeId, month], function (updErr) {
-//         if (updErr) {
-//           console.error("❌ Error updating salary:", updErr);
-//           return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Database update failed" }));
-//         }
-
-//         if (this.changes === 0) {
-//           return db.run("ROLLBACK", () => res.status(404).json({ success: false, message: "No salary record found for this employee and month" }));
-//         }
-
-//         if (paid !== "Yes") {
-//           return db.run("COMMIT", (commitErr) => {
-//             if (commitErr) {
-//               console.error("COMMIT error (not paid path):", commitErr);
-//               return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to commit transaction" }));
-//             }
-//             return res.json({ success: true, message: "Salary updated (not paid)" });
-//           });
-//         }
-
-//         // paid === 'Yes' -> update expense_payments (if expense exists) and credit KITTY
-//         db.get(`SELECT employee_name, total_insurance FROM salary_payments WHERE employee_id = ? LIMIT 1`, [employeeId], (empErr, empRow) => {
-//           if (empErr) {
-//             console.error("❌ Error fetching employee:", empErr);
-//             return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to fetch employee" }));
-//           }
-//           if (!empRow) {
-//             console.error("❌ Employee row missing in salary_payments for:", employeeId);
-//             return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Employee data missing" }));
-//           }
-
-//           const employeeName = empRow.employee_name || "";
-//           const insuranceAmount = parseFloat(empRow.total_insurance) || 0;
-//           const typeString = `Salary - ${employeeName} (${employeeId})`;
-
-//           // find expense row for this salary type (optional)
-//           db.get(`SELECT auto_id, amount FROM expenses WHERE type = ? LIMIT 1`, [typeString], (expErr, expenseRow) => {
-//             if (expErr) {
-//               console.error("❌ Error querying expenses:", expErr);
-//               return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to query expenses" }));
-//             }
-
-//             const upsertExpensePayment = (next) => {
-//               if (!expenseRow) return next();
-//               const expenseId = expenseRow.auto_id;
-//               const updateExpPaySql = `
-//                 UPDATE expense_payments
-//                 SET paid_amount = ?, paid_date = ?, status = 'Paid'
-//                 WHERE expense_id = ? AND month_year = ?
-//               `;
-//               db.run(updateExpPaySql, [paidAmtVal, paidDate, expenseId, month], function (upExpErr) {
-//                 if (upExpErr) {
-//                   console.error("❌ Error updating expense_payments:", upExpErr);
-//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update expense_payments" }));
-//                 }
-//                 if (this.changes > 0) return next();
-//                 const insertExpPaySql = `
-//                   INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
-//                   VALUES (?, ?, ?, ?, ?, 'Paid')
-//                 `;
-//                 db.run(insertExpPaySql, [expenseId, month, expenseRow.amount || paidAmtVal, paidAmtVal, paidDate], function (insErr) {
-//                   if (insErr) {
-//                     console.error("❌ Error inserting expense_payments:", insErr);
-//                     return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to insert expense_payments" }));
-//                   }
-//                   return next();
-//                 });
-//               });
-//             };
-
-//             const finalize = (result) => {
-//               db.run("COMMIT", (commitErr) => {
-//                 if (commitErr) {
-//                   console.error("❌ COMMIT error:", commitErr);
-//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to commit transaction" }));
-//                 }
-//                 return res.json({
-//                   success: true,
-//                   message: "Salary updated and marked paid; expense + KITTY updated.",
-//                   kitty_credit: result || null,
-//                 });
-//               });
-//             };
-
-//             // now upsert expense_payments then credit KITTY (if insuranceAmount > 0)
-//             upsertExpensePayment((upErr) => {
-//               if (upErr) return; // handled inside upsertExpensePayment
-
-//               if (!insuranceAmount || insuranceAmount <= 0) {
-//                 return finalize(null);
-//               }
-
-//               // credit kitty inside same transaction
-//               db.get(`SELECT * FROM accounts WHERE account_name LIKE '%KITTY%' LIMIT 1`, [], (kErr, kittyAcc) => {
-//                 if (kErr) {
-//                   console.error("❌ Error finding KITTY account:", kErr);
-//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to find KITTY account" }));
-//                 }
-//                 if (!kittyAcc) {
-//                   console.error("❌ No KITTY account found (account_name LIKE '%KITTY%')");
-//                   return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "KITTY account not found" }));
-//                 }
-
-//                 const prevBal = parseFloat(kittyAcc.balance) || 0;
-//                 const newBal = prevBal + insuranceAmount;
-
-//                 db.run(`UPDATE accounts SET balance = ? WHERE account_id = ?`, [newBal, kittyAcc.account_id], function (updErr) {
-//                   if (updErr) {
-//                     console.error("❌ Error updating KITTY balance:", updErr);
-//                     return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to update KITTY balance" }));
-//                   }
-
-//                   const now2 = new Date();
-//                   const hhmm2 = `${now2.getHours().toString().padStart(2, "0")}${now2
-//                     .getMinutes()
-//                     .toString()
-//                     .padStart(2, "0")}`;
-//                   const kittyTxId = `CRD|KITTY|INS|${paidDate}|${hhmm2}`;
-//                   const desc = `Insurance credit for employee ${employeeId}`;
-
-//                   db.run(
-//                     `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
-//                      VALUES (?, ?, 'Credit', ?, ?, ?, ?, datetime('now'))`,
-//                     [kittyTxId, kittyAcc.account_number, insuranceAmount, desc, prevBal, newBal],
-//                     function (insTxErr) {
-//                       if (insTxErr) {
-//                         console.error("❌ Error inserting KITTY transaction:", insTxErr);
-//                         return db.run("ROLLBACK", () => res.status(500).json({ success: false, message: "Failed to record KITTY transaction" }));
-//                       }
-
-//                       // success, finalize
-//                       return finalize({
-//                         credited: true,
-//                         transaction_id: kittyTxId,
-//                         previous_balance: prevBal,
-//                         updated_balance: newBal,
-//                       });
-//                     }
-//                   );
-//                 });
-//               });
-//             }); // upsertExpensePayment
-//           }); // get expenseRow
-//         }); // get empRow
-//       }); // update monthly_salary_payments
-//     }); // BEGIN
-//   }); // serialize
-// });
-
 
 app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
   const { employeeId, month } = req.params;
@@ -2678,151 +3093,6 @@ app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
 
 
 
-// app.put("/pay-expense", (req, res) => {
-//   const { expense_id, paid_amount, paid_date } = req.body;
-
-//   if (!expense_id || !paid_amount || !paid_date) {
-//     return res.status(400).json({ success: false, message: "Missing fields" });
-//   }
-
-//   // parse amount safely
-//   const amount = Number(paid_amount);
-//   if (Number.isNaN(amount) || amount <= 0) {
-//     return res.status(400).json({ success: false, message: "Invalid paid_amount" });
-//   }
-
-//   const paidMonthYear = paid_date.slice(0, 7); // "YYYY-MM"
-
-//   const now = new Date();
-//   const timeCode = `${now.getHours().toString().padStart(2, "0")}${now
-//     .getMinutes()
-//     .toString()
-//     .padStart(2, "0")}`;
-
-//   // 1️⃣ Get Expense details
-//   db.get(`SELECT * FROM expenses WHERE auto_id = ?`, [expense_id], (err, expense) => {
-//     if (err) return res.status(500).json({ success: false, message: err.message });
-//     if (!expense)
-//       return res.status(404).json({ success: false, message: "Expense not found" });
-
-//     const expenseType = expense.type || expense.description || "General";
-//     const isRegular = expense.regular === "Yes" ? "Regular" : "NonReg";
-//     const transactionId = `DEB|${isRegular}|${expenseType}|${paidMonthYear}|${timeCode}`;
-//     const description = `Expense paid for ${expenseType} of month ${paidMonthYear}`;
-
-//     // 2️⃣ Get current account
-//     db.get(`SELECT * FROM accounts WHERE account_type = 'Current'`, (err, currentAcc) => {
-//       if (err) return res.status(500).json({ success: false, message: err.message });
-//       if (!currentAcc)
-//         return res.status(500).json({ success: false, message: "Current account not found" });
-
-//       const prevBalance = parseFloat(currentAcc.balance) || 0;
-//       if (prevBalance < amount) {
-//         return res.status(400).json({
-//           success: false,
-//           message: `Insufficient funds. Current balance: ₹${prevBalance} — required: ₹${amount}`,
-//         });
-//       }
-//       const newBalance = prevBalance - amount;
-
-//       // Run DB changes inside a transaction so everything is atomic
-//       db.serialize(() => {
-//         db.run("BEGIN TRANSACTION", (err) => {
-//           if (err) {
-//             console.error("BEGIN TRANSACTION error:", err);
-//             return res.status(500).json({ success: false, message: "Transaction start failed" });
-//           }
-
-//           // 1) update account balance
-//           db.run(
-//             `UPDATE accounts SET balance = ? WHERE account_id = ?`,
-//             [newBalance, currentAcc.account_id],
-//             function (err) {
-//               if (err) {
-//                 console.error("Error updating accounts:", err);
-//                 return db.run("ROLLBACK", () => {
-//                   return res.status(500).json({ success: false, message: "Failed to update account" });
-//                 });
-//               }
-
-//               // 2) insert transaction
-//               db.run(
-//                 `INSERT INTO transactions (transaction_id, account_number, type, amount, description, previous_balance, updated_balance, created_at)
-//                  VALUES (?, ?, 'Debit', ?, ?, ?, ?, datetime('now'))`,
-//                 [
-//                   transactionId,
-//                   currentAcc.account_number,
-//                   amount,
-//                   description,
-//                   prevBalance,
-//                   newBalance,
-//                 ],
-//                 function (err) {
-//                   if (err) {
-//                     console.error("Error inserting transaction:", err);
-//                     return db.run("ROLLBACK", () => {
-//                       return res.status(500).json({ success: false, message: "Failed to insert transaction" });
-//                     });
-//                   }
-
-//                   // 3) insert or update expense_payments
-//                   // NOTE: ON CONFLICT requires a UNIQUE constraint on (expense_id, month_year)
-//                   db.run(
-//                     `INSERT INTO expense_payments (expense_id, month_year, actual_amount, paid_amount, paid_date, status)
-//                      VALUES (?, ?, ?, ?, ?, 'Paid')
-//                      ON CONFLICT(expense_id, month_year) DO UPDATE SET
-//                        paid_amount = excluded.paid_amount,
-//                        paid_date = excluded.paid_date,
-//                        status = 'Paid'`,
-//                     [expense_id, paidMonthYear, expense.amount, amount, paid_date],
-//                     function (err) {
-//                       if (err) {
-//                         console.error("Error upserting expense_payments:", err);
-//                         return db.run("ROLLBACK", () => {
-//                           return res.status(500).json({ success: false, message: "Failed to record payment" });
-//                         });
-//                       }
-
-//                       // 4) commit transaction
-//                       db.run("COMMIT", (err) => {
-//   if (err) {
-//     console.error("COMMIT error:", err);
-//     return db.run("ROLLBACK", () => {
-//       return res.status(500).json({ success: false, message: "Failed to commit transaction" });
-//     });
-//   }
-
-//   // Upsert into monthly_salary_payments for salary expenses
-//   updateSalaryOnExpensePaid(expense, expenseType, paidMonthYear, amount, paid_date);
-
-//   return res.json({
-//     success: true,
-//     message: `Expense paid successfully.`,
-//     transaction_id: transactionId,
-//     previous_balance: prevBalance,
-//     updated_balance: newBalance,
-//   });
-// });
-// // commit
-//                     } // expense_payments callback
-//                   ); // db.run expense_payments
-//                 } // transaction insert callback
-//               ); // db.run transaction insert
-//             } // update accounts callback
-//           ); // db.run update accounts
-//         }); // begin transaction
-//       }); // serialize
-//     }); // get accounts
-//   }); // get expense
-// });
-
-
-
-
-
-
-
-
 /* =========================
    PUT /pay-expense
    (atomic: debit current, insert transaction, upsert expense_payments, credit KITTY for salary expenses)
@@ -3045,6 +3315,7 @@ app.get("/monthlySalary", (req, res) => {
   });
 });
 
+
 // app.get("/getexpenses", (req, res) => {
 //   try {
 //     let { month } = req.query;
@@ -3056,7 +3327,7 @@ app.get("/monthlySalary", (req, res) => {
 //     const sql = `
 // WITH params(m) AS (SELECT ? AS m),
 
-// -- Normalize expense start month
+// -- Normalize expense start month (exclude Insurance rows)
 // expenses_norm AS (
 //   SELECT 
 //     e.*,
@@ -3065,6 +3336,7 @@ app.get("/monthlySalary", (req, res) => {
 //       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
 //     END AS orig_ym
 //   FROM expenses e
+//   WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')  -- <-- FILTER OUT insurance rows
 // ),
 
 // -- RECURSIVE MONTHS FOR regular = Yes
@@ -3165,6 +3437,16 @@ app.get("/monthlySalary", (req, res) => {
 //   ON ep.expense_id = am.auto_id
 //   AND ep.month_year IS NOT NULL
 //   AND substr(ep.month_year,1,7) = am.month_year
+//   LEFT JOIN invoices inv
+//   ON am.type = 'GST'
+//   AND am.description LIKE '%' || inv.invoice_number || '%'
+
+// LEFT JOIN Projects pr
+//   ON inv.project_id = pr.projectID
+
+// LEFT JOIN ClientsTable cl
+//   ON pr.clientID = cl.id
+
 
 // WHERE
 //   am.month_year = (SELECT m FROM params)
@@ -3177,7 +3459,6 @@ app.get("/monthlySalary", (req, res) => {
 
 // ORDER BY am.auto_id DESC, am.month_year DESC;
 // `;
-
 
 //     db.all(sql, [month], (err, rows) => {
 //       if (err) {
@@ -3199,7 +3480,191 @@ app.get("/monthlySalary", (req, res) => {
 //         paid_date: row.paid_date || null,
 //         paymentstatus: row.payment_status || "Pending",
 //         expensestatus: row.expense_status || "Raised",
-//         month_year: row.expense_month
+//         month_year: row.month_year
+//       }));
+
+//       res.json(formatted);
+//     });
+//   } catch (ex) {
+//     console.error("Unexpected error:", ex);
+//     res.status(500).json({ error: "Unexpected server error" });
+//   }
+// });
+
+// app.get("/getexpenses", (req, res) => {
+//   try {
+//     let { month } = req.query;
+//     if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
+
+//     if (/^\d{4}-\d{2}-\d{2}$/.test(month)) month = month.slice(0, 7);
+//     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Month must be YYYY-MM" });
+
+//     const sql = `
+// WITH params(m) AS (SELECT ? AS m),
+
+// expenses_norm AS (
+//   SELECT 
+//     e.*,
+//     CASE 
+//       WHEN e.regular = 'Yes' THEN substr(e.raised_date,1,7)
+//       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
+//     END AS orig_ym
+//   FROM expenses e
+//   WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')
+// ),
+
+// months_gen AS (
+//   SELECT 
+//     en.auto_id,
+//     en.regular,
+//     en.type,
+//     en.description,
+//     en.amount,
+//     en.currency,
+//     en.orig_ym AS month_year,
+//     en.orig_ym,
+//     en.raised_date,
+//     en.due_date AS expense_due_date,
+//     en.status AS expense_status,
+//     en.paid_date AS expense_paid_date,
+//     en.paid_amount AS expense_paid_amount
+//   FROM expenses_norm en
+//   WHERE en.regular = 'Yes'
+//     AND en.orig_ym <= (SELECT m FROM params)
+
+//   UNION ALL
+
+//   SELECT 
+//     mg.auto_id,
+//     mg.regular,
+//     mg.type,
+//     mg.description,
+//     mg.amount,
+//     mg.currency,
+//     CASE
+//       WHEN substr(mg.month_year,6,2) = '12'
+//         THEN printf('%04d-01', CAST(substr(mg.month_year,1,4) AS INTEGER) + 1)
+//       ELSE printf('%04d-%02d',
+//              CAST(substr(mg.month_year,1,4) AS INTEGER),
+//              CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
+//     END AS month_year,
+//     mg.orig_ym,
+//     mg.raised_date,
+//     mg.expense_due_date,
+//     mg.expense_status,
+//     mg.expense_paid_date,
+//     mg.expense_paid_amount
+//   FROM months_gen mg
+//   WHERE mg.month_year < (SELECT m FROM params)
+// ),
+
+// single_months AS (
+//   SELECT 
+//     en.auto_id,
+//     en.regular,
+//     en.type,
+//     en.description,
+//     en.amount,
+//     en.currency,
+//     (SELECT m FROM params) AS month_year,
+//     en.orig_ym,
+//     en.raised_date,
+//     en.due_date AS expense_due_date,
+//     en.status AS expense_status,
+//     en.paid_date AS expense_paid_date,
+//     en.paid_amount AS expense_paid_amount
+//   FROM expenses_norm en
+//   WHERE en.regular <> 'Yes'
+//     AND (
+//          en.orig_ym = (SELECT m FROM params)
+//          OR NOT EXISTS (
+//               SELECT 1 FROM expense_payments ep
+//               WHERE ep.expense_id = en.auto_id
+//                 AND substr(ep.month_year,1,7) = en.orig_ym
+//                 AND ep.status = 'Paid'
+//          )
+//     )
+// ),
+
+// all_months AS (
+//   SELECT * FROM months_gen
+//   UNION ALL
+//   SELECT * FROM single_months
+// )
+
+// SELECT 
+//   am.*,
+
+//   -- 🔹 GST DATA FROM OTHER TABLES
+//   cl.clientName     AS client_name,
+//   pr.projectName    AS project_name,
+//   inv.invoice_value AS invoice_value,
+
+//   ep.actual_amount,
+//   COALESCE(ep.paid_amount, am.expense_paid_amount) AS paid_amount,
+//   COALESCE(ep.paid_date, am.expense_paid_date) AS paid_date,
+//   COALESCE(ep.status, am.expense_status) AS payment_status,
+//   ep.due_date AS payment_due_date,
+//   ep.month_year AS payment_month
+
+// FROM all_months am
+
+// LEFT JOIN expense_payments ep
+//   ON ep.expense_id = am.auto_id
+//   AND substr(ep.month_year,1,7) = am.month_year
+
+// -- 🔹 JOIN GST → INVOICE → PROJECT → CLIENT
+// LEFT JOIN invoices inv
+//   ON am.type = 'GST'
+// AND am.description LIKE '%' || 
+//     substr(inv.invoice_number, 1, instr(inv.invoice_number, '-') - 1) || '%'
+
+
+// LEFT JOIN Projects pr
+//   ON inv.project_id = pr.projectID
+
+// LEFT JOIN ClientsTable cl
+//   ON pr.clientID = cl.id
+
+// WHERE
+//   am.month_year = (SELECT m FROM params)
+//   OR NOT EXISTS (
+//     SELECT 1 FROM expense_payments ep2
+//     WHERE ep2.expense_id = am.auto_id
+//       AND substr(ep2.month_year,1,7) = am.month_year
+//       AND ep2.status = 'Paid'
+//   )
+
+// ORDER BY am.auto_id DESC, am.month_year DESC;
+// `;
+
+//     db.all(sql, [month], (err, rows) => {
+//       if (err) {
+//         console.error("DB error:", err);
+//         return res.status(500).json({ error: err.message });
+//       }
+
+//       const formatted = rows.map(row => ({
+//         id: `E${row.auto_id}`,
+//         expense_id: row.auto_id,
+//         regular: row.regular,
+//         type: row.type,
+//         description: row.description,
+
+//         // 🔹 GST FIELDS
+//         client_name: row.client_name || null,
+//         project_name: row.project_name || null,
+//         invoice_value: row.invoice_value || null,
+
+//         amount: row.amount,
+//         actual_to_pay: row.actual_amount ?? null,
+//         paid_amount: row.paid_amount ?? 0,
+//         raised_date: row.raised_date,
+//         due_date: row.payment_due_date || row.expense_due_date,
+//         paid_date: row.paid_date || null,
+//         paymentstatus: row.payment_status || "Pending",
+//         expensestatus: row.expense_status || "Raised",
+//         month_year: row.month_year
 //       }));
 
 //       res.json(formatted);
@@ -3211,33 +3676,35 @@ app.get("/monthlySalary", (req, res) => {
 // });
 
 
-
 app.get("/getexpenses", (req, res) => {
   try {
     let { month } = req.query;
-    if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
+    if (!month) {
+      return res.status(400).json({ error: "Month is required (YYYY-MM)" });
+    }
 
     if (/^\d{4}-\d{2}-\d{2}$/.test(month)) month = month.slice(0, 7);
-    if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Month must be YYYY-MM" });
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: "Month must be YYYY-MM" });
+    }
 
     const sql = `
 WITH params(m) AS (SELECT ? AS m),
 
--- Normalize expense start month (exclude Insurance rows)
 expenses_norm AS (
   SELECT 
     e.*,
+    CAST(strftime('%d', e.due_date) AS INTEGER) AS due_day,
     CASE 
       WHEN e.regular = 'Yes' THEN substr(e.raised_date,1,7)
       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
     END AS orig_ym
   FROM expenses e
-  WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')  -- <-- FILTER OUT insurance rows
+  WHERE e.type IS NOT NULL
+    AND e.type NOT LIKE 'Insurance%'
 ),
 
--- RECURSIVE MONTHS FOR regular = Yes
 months_gen AS (
-  -- base row
   SELECT 
     en.auto_id,
     en.regular,
@@ -3249,6 +3716,7 @@ months_gen AS (
     en.orig_ym,
     en.raised_date,
     en.due_date AS expense_due_date,
+    en.due_day,
     en.status AS expense_status,
     en.paid_date AS expense_paid_date,
     en.paid_amount AS expense_paid_amount
@@ -3258,7 +3726,6 @@ months_gen AS (
 
   UNION ALL
 
-  -- recursive step
   SELECT 
     mg.auto_id,
     mg.regular,
@@ -3270,12 +3737,13 @@ months_gen AS (
       WHEN substr(mg.month_year,6,2) = '12'
         THEN printf('%04d-01', CAST(substr(mg.month_year,1,4) AS INTEGER) + 1)
       ELSE printf('%04d-%02d',
-             CAST(substr(mg.month_year,1,4) AS INTEGER),
-             CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
-    END AS month_year,
+        CAST(substr(mg.month_year,1,4) AS INTEGER),
+        CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
+    END,
     mg.orig_ym,
     mg.raised_date,
     mg.expense_due_date,
+    mg.due_day,
     mg.expense_status,
     mg.expense_paid_date,
     mg.expense_paid_amount
@@ -3283,7 +3751,6 @@ months_gen AS (
   WHERE mg.month_year < (SELECT m FROM params)
 ),
 
--- NON-RECURSIVE MONTHS FOR regular = No
 single_months AS (
   SELECT 
     en.auto_id,
@@ -3292,59 +3759,153 @@ single_months AS (
     en.description,
     en.amount,
     en.currency,
-    (SELECT m FROM params) AS month_year,
+    en.orig_ym AS month_year,
     en.orig_ym,
     en.raised_date,
     en.due_date AS expense_due_date,
+    en.due_day,
     en.status AS expense_status,
     en.paid_date AS expense_paid_date,
     en.paid_amount AS expense_paid_amount
   FROM expenses_norm en
   WHERE en.regular <> 'Yes'
-    AND (
-         en.orig_ym = (SELECT m FROM params)
-         OR NOT EXISTS (
-              SELECT 1 FROM expense_payments ep
-              WHERE ep.expense_id = en.auto_id
-                AND substr(ep.month_year,1,7) = en.orig_ym
-                AND ep.status = 'Paid'
-         )
-    )
 ),
 
--- MERGE BOTH SOURCES
 all_months AS (
   SELECT * FROM months_gen
   UNION ALL
   SELECT * FROM single_months
 )
 
--- FINAL OUTPUT WITH PAYMENT JOIN + CARRY FORWARD FILTER
 SELECT 
-  am.*,
+  am.auto_id,
+  am.regular,
+  am.type,
+  am.description,
+  am.amount,
+  am.currency,
+  am.month_year,
+  am.raised_date,
+
+  cl.clientName  AS client_name,
+  pr.projectName AS project_name,
+  inv.invoice_value,
+
   ep.actual_amount,
   COALESCE(ep.paid_amount, am.expense_paid_amount) AS paid_amount,
   COALESCE(ep.paid_date, am.expense_paid_date) AS paid_date,
   COALESCE(ep.status, am.expense_status) AS payment_status,
-  ep.due_date AS payment_due_date,
-  ep.month_year AS payment_month
+
+  CASE
+    WHEN am.type LIKE 'PF%' 
+      OR am.type LIKE 'PT%' 
+      OR am.type LIKE 'ESI%' 
+      THEN date(am.month_year || '-01', '+1 month', '+6 day')
+
+    WHEN am.type LIKE 'Consultant%' 
+      OR am.type LIKE 'TDS%'
+      THEN date(am.month_year || '-01', '+1 month', '+9 day')
+
+    WHEN am.type LIKE 'Salary%'
+      THEN date(am.month_year || '-01', '+1 month', '-1 day')
+
+    WHEN am.regular = 'Yes'
+      THEN (
+        CASE
+          WHEN am.due_day <= CAST(strftime('%d',
+            date(am.month_year || '-01', '+1 month', '-1 day')) AS INTEGER)
+          THEN date(am.month_year || '-01', '+' || (am.due_day - 1) || ' day')
+          ELSE date(am.month_year || '-01', '+1 month', '-1 day')
+        END
+      )
+
+    ELSE am.expense_due_date
+  END AS computed_due_date
+
 FROM all_months am
+
 LEFT JOIN expense_payments ep
   ON ep.expense_id = am.auto_id
-  AND ep.month_year IS NOT NULL
-  AND substr(ep.month_year,1,7) = am.month_year
+ AND substr(ep.month_year,1,7) = am.month_year
+
+-- ✅ SINGLE INVOICE PER GST (NO DUPLICATES)
+LEFT JOIN invoices inv
+  ON inv.id = (
+    SELECT i.id
+    FROM invoices i
+    WHERE am.type = 'GST'
+      AND am.description LIKE '%' || substr(i.invoice_number,1,instr(i.invoice_number,'-')-1) || '%'
+    ORDER BY i.invoice_date DESC
+    LIMIT 1
+  )
+
+LEFT JOIN Projects pr ON inv.project_id = pr.projectID
+LEFT JOIN ClientsTable cl ON pr.clientID = cl.id
 
 WHERE
+  -- current month
   am.month_year = (SELECT m FROM params)
-  OR NOT EXISTS (
-    SELECT 1 FROM expense_payments ep2
-    WHERE ep2.expense_id = am.auto_id
-      AND substr(ep2.month_year,1,7) = am.month_year
-      AND ep2.status = 'Paid'
+
+  -- regular carry-forward (past only)
+  OR (
+    am.regular = 'Yes'
+    AND am.month_year < (SELECT m FROM params)
+    AND NOT EXISTS (
+      SELECT 1 FROM expense_payments ep2
+      WHERE ep2.expense_id = am.auto_id
+        AND substr(ep2.month_year,1,7) = am.month_year
+        AND ep2.status = 'Paid'
+    )
+  )
+
+  -- GST carry-forward (single row)
+  OR (
+    am.type = 'GST'
+    AND am.month_year < (SELECT m FROM params)
+    AND NOT EXISTS (
+      SELECT 1 FROM expense_payments ep3
+      WHERE ep3.expense_id = am.auto_id
+        AND ep3.status = 'Paid'
+    )
   )
 
 ORDER BY am.auto_id DESC, am.month_year DESC;
 `;
+
+const cleanDescription = (row) => {
+  if (!row.type) return row.description;
+
+  // ✅ Salary
+  if (row.type.startsWith("Salary")) {
+    return `Monthly Salary${
+      row.type.includes("(")
+        ? " " + row.type.slice(row.type.indexOf("("))
+        : ""
+    }`;
+  }
+
+  // ✅ PF
+  if (row.type.startsWith("PF")) {
+    return "Provident Fund";
+  }
+
+  // ✅ Professional Tax / PT
+  if (
+    row.type.startsWith("Professional Tax") ||
+    row.type === "PT"
+  ) {
+    return "Professional Tax";
+  }
+
+  // ✅ ESI
+  if (row.type.startsWith("ESI")) {
+    return "ESI Contribution";
+  }
+
+  // ❌ GST & others → keep original description
+  return row.description;
+};
+
 
     db.all(sql, [month], (err, rows) => {
       if (err) {
@@ -3357,20 +3918,28 @@ ORDER BY am.auto_id DESC, am.month_year DESC;
         expense_id: row.auto_id,
         regular: row.regular,
         type: row.type,
-        description: row.description,
+       description: cleanDescription(row),
+
+
+
+        client_name: row.client_name || null,
+        project_name: row.project_name || null,
+        invoice_value: row.invoice_value || null,
+
         amount: row.amount,
         actual_to_pay: row.actual_amount ?? null,
         paid_amount: row.paid_amount ?? 0,
         raised_date: row.raised_date,
-        due_date: row.payment_due_date || row.expense_due_date,
+        due_date: row.computed_due_date,
         paid_date: row.paid_date || null,
         paymentstatus: row.payment_status || "Pending",
-        expensestatus: row.expense_status || "Raised",
+        expensestatus: "Raised",
         month_year: row.month_year
       }));
 
       res.json(formatted);
     });
+
   } catch (ex) {
     console.error("Unexpected error:", ex);
     res.status(500).json({ error: "Unexpected server error" });
@@ -3663,15 +4232,6 @@ app.get("/transactionsOfBankAccounts", (req, res) => {
     }
   );
 });
-
-// // 🔹 Hide / Unhide Account
-// app.patch("/accounts/:id/hide", (req, res) => {
-//   const { hide } = req.body;
-//   db.run(`UPDATE accounts SET is_hidden = ? WHERE account_id = ?`, [hide, req.params.id], (err) => {
-//     if (err) return res.status(400).json({ error: err.message });
-//     res.json({ message: hide ? "Hidden" : "Visible" });
-//   });
-// });
 
 // 🔹 Get Account Balance
 app.get("/accounts/:number/balance", (req, res) => {
