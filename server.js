@@ -259,21 +259,6 @@ db.run(`
 );
 
 `);
-// function dropTableWithRetry(db, retries = 5) {
-//   db.run("DROP TABLE IF EXISTS invoices;", (err) => {
-//     if (err && err.code === "SQLITE_BUSY" && retries > 0) {
-//       console.warn("⚠️ Database locked. Retrying in 500ms...");
-//       setTimeout(() => dropTableWithRetry(db, retries - 1), 500);
-//     } else if (err) {
-//       console.error("❌ Error dropping table:", err);
-//     } else {
-//       console.log("✅ Table dropped successfully.");
-//     }
-//   });
-// }
-
-// dropTableWithRetry(db);
-
 function generateMonthRange(start, end) {
   const startDate = new Date(start + "-01");
   const endDate = new Date(end + "-01");
@@ -286,8 +271,6 @@ function generateMonthRange(start, end) {
 
   return months;
 }
-
-
 function runQuery(query) {
   return new Promise((resolve, reject) => {
     db.all(query, (err, rows) => {
@@ -299,9 +282,6 @@ function runQuery(query) {
     });
   });
 }
-
-
-
 // GET clients
 app.get("/getclients", (req, res) => {
   db.all("SELECT * FROM ClientsTable", [], (err, rows) => {
@@ -336,13 +316,6 @@ app.post("/addclients", (req, res) => {
     gstNumber,
     gstPercentage,
   } = req.body;
-
-  // const query = `
-  //   INSERT INTO Clients
-  //   (clientName, aboutClient, paymentTerms, location, contactSpoc, contactEmail, contactNumber, gstApplicable, gstNumber, gstPercentage)
-  //   VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  // `;
-
 db.serialize(() => {
   db.run(
     `INSERT INTO ClientsTable 
@@ -368,8 +341,6 @@ db.serialize(() => {
 });
 
 });
-
-
 // -------- ADD PROJECT API --------
 function generateRandomNumber(length = 6) {
   return Math.floor(Math.random() * Math.pow(10, length))
@@ -391,96 +362,6 @@ function getUniqueProjectID(db, clientID, projectName, callback) {
     }
   });
 }
-
-// app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
-//   const {
-//     clientID,
-//     startDate,
-//     endDate,
-//     projectName,
-//     projectDescription,
-//     skill,
-//     projectLocation,
-//     spoc,
-//     mailID,
-//     mobileNo,
-//     billingType,
-//     billRate,
-//     monthlyBilling,
-//     gst,tds,netPayable,
-//     employees, // ✅ from frontend as JSON
-//     hoursOrDays,
-//     poNumber,
-//     purchaseOrderValue,
-//     active,
-//     invoiceCycle,
-//   } = req.body;
-
-//   const purchaseOrderFile = req.file ? req.file.filename : null;
-
-//   getUniqueProjectID(db, clientID, projectName, (err, uniqueID) => {
-//     if (err) {
-//       console.error("Error generating projectID:", err);
-//       return res.status(500).json({ error: "Failed to generate project ID" });
-//     }
-
-//     let employeesData = [];
-//     try {
-//       employeesData = typeof employees === "string" ? JSON.parse(employees) : employees;
-//     } catch (e) {
-//       console.error("Error parsing employees JSON:", e);
-//     }
-
-//     const query = `
-//       INSERT INTO Projects (
-//         projectID, clientID, startDate, endDate, projectName, projectDescription,
-//         skill, projectLocation, spoc, mailID, mobileNo, billingType, billRate,
-//         monthlyBilling,gst,tds,netPayable, employees,hoursOrDays, poNumber, purchaseOrder, purchaseOrderValue,
-//         active, invoiceCycle
-//       )
-//       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,?,?,?,?)
-//     `;
-
-//     db.run(
-//       query,
-//       [
-//         uniqueID,
-//         clientID,
-//         startDate,
-//         endDate,
-//         projectName,
-//         projectDescription,
-//         skill,
-//         projectLocation,
-//         spoc,
-//         mailID,
-//         mobileNo,
-//         billingType,
-//         billRate,
-//         monthlyBilling,
-//         gst,tds,netPayable,
-//         JSON.stringify(employeesData), // ✅ store JSON
-//         hoursOrDays,
-//         poNumber,
-//         purchaseOrderFile,
-//         purchaseOrderValue,
-//         active,
-//         invoiceCycle,
-//       ],
-//       function (err) {
-//         if (err) {
-//           console.error("DB Error:", err.message);
-//           return res.status(500).json({ error: err.message });
-//         }
-//         res.json({ projectID: uniqueID, message: "Project added successfully" });
-//       }
-//     );
-//   });
-// });
-
-
-// -------- GET PROJECTS API --------
-
 app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
   const {
     clientID,
@@ -615,36 +496,6 @@ app.post("/addproject", upload.single("purchaseOrder"), (req, res) => {
     );
   });
 });
-
-
-// app.get("/getprojects", (req, res) => {
-//   db.all("SELECT * FROM Projects", [], (err, rows) => {
-//     if (err) return res.status(500).json({ error: err.message });
-
-//     db.all("SELECT employee_id, employee_name FROM employees", [], (err, emps) => {
-//       if (err) return res.status(500).json({ error: err.message });
-
-//       const map = new Map(emps.map(e => [e.employee_id, e.employee_name]));
-//       const formatted = rows.map(row => {
-//         let parsed = [];
-//         try {
-//           const arr = JSON.parse(row.employees || "[]");
-//           parsed = arr.map(emp => ({
-//             id: typeof emp === "string" ? emp : emp.id,
-//             name: typeof emp === "string" ? map.get(emp) : emp.name,
-//           }));
-//         } catch {
-//           parsed = [];
-//         }
-//         return { ...row, employees: parsed };
-//       });
-
-//       res.json(formatted);
-//     });
-//   });
-// });
-
-
 app.get("/getprojects", (req, res) => {
   db.all("SELECT * FROM Projects", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -689,8 +540,6 @@ app.get("/getprojects", (req, res) => {
     });
   });
 });
-
-
 // POST API (add new employee)
 app.post("/postemployees",
   upload.fields([{ name: "resume" }, { name: "photo" }]),
@@ -783,8 +632,6 @@ app.get("/getAvailableEmployees", (req, res) => {
     });
   });
 });
-
-
 // ✅ GET all salaries
 app.get("/getallsalaries", (req, res) => {
   db.all(`SELECT * FROM salary_payments`, [], (err, rows) => {
@@ -794,10 +641,6 @@ app.get("/getallsalaries", (req, res) => {
     res.json(rows);
   });
 });
-
- 
-
-
 // 💰 Add Salary + create related expenses
 app.post("/addsalaries", (req, res) => {
   console.log("➡️ /addsalaries body:", req.body);
@@ -1076,10 +919,6 @@ app.post("/addsalaries", (req, res) => {
     );
   });
 });
-
-
-
-
 app.get("/getAvailableEmployeesForSalaries", (req, res) => {
   const sql = `
     SELECT employee_id, employee_name, ctc, date_of_joining
@@ -1095,8 +934,6 @@ app.get("/getAvailableEmployeesForSalaries", (req, res) => {
     res.json(rows);
   });
 });
-
-
 // Post Forecast
 app.post("/forecasts", (req, res) => {
   const { name, start_date, end_date } = req.body;
@@ -1178,9 +1015,6 @@ app.post("/transactions", (req, res) => {
     );
   });
 });
-
-
-
 // Getting Particular Forcast Transactions
 app.get("/transactions/:forecastId", (req, res) => {
   const forecastId = req.params.forecastId;
@@ -1195,152 +1029,6 @@ app.get("/transactions/:forecastId", (req, res) => {
     res.json({ transactions: rows });
   });
 });
-
-
-
-// Post Invoices and GST Expense Adding
-// app.post("/invoices", (req, res) => {
-//   const {
-//     invoice_number,
-//     invoice_date,
-//     client_name,
-//     project_id,
-//     start_date,
-//     end_date,
-//     invoice_cycle,
-//     invoice_value,
-//     gst_amount,
-//     due_date,
-//     billable_days,
-//     non_billable_days,
-//     received,
-//     received_date
-//   } = req.body;
-  
-
-//   // Step 1: Get client's paymentTerms
-//   db.get(
-//     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
-//     [client_name],
-//     (err, client) => {
-//       if (err) return res.status(500).json({ error: "Error fetching client data" });
-//       if (!client) return res.status(400).json({ error: "Client not found" });
-
-//       const paymentTerms = client.paymentTerms || 0;
-
-//       // Calculate due_date if missing
-//       let finalDueDate = due_date;
-//       if (!finalDueDate || finalDueDate.trim() === "") {
-//         const d = new Date(invoice_date);
-//         d.setDate(d.getDate() + paymentTerms + 2);
-//         finalDueDate = d.toISOString().split("T")[0];
-//       }
-
-//       // Step 2: Insert Invoice
-//       const sql = `
-//         INSERT INTO invoices (
-//           invoice_number, invoice_date, client_name, project_id,
-//           start_date, end_date, invoice_cycle, invoice_value,
-//           gst_amount, due_date, billable_days, non_billable_days, received, received_date
-//         )
-//         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-//       `;
-
-//       db.run(
-//         sql,
-//         [
-//           invoice_number,
-//           invoice_date,
-//           client_name,
-//           project_id,
-//           start_date,
-//           end_date,
-//           invoice_cycle,
-//           invoice_value,
-//           gst_amount,
-//           finalDueDate,
-//           billable_days,
-//           non_billable_days,
-//           received || "No",
-//           received_date || null
-//         ],
-//         function (err) {
-//           if (err) {
-//             console.error("Insert error:", err);
-//             return res.status(500).json({ error: err.message });
-//           }
-
-//           const invoiceId = this.lastID;
-
-//           // =====================================
-//           // Step 3: Insert GST Expense Automatically
-//           // =====================================
-
-//           const raisedDate = new Date(invoice_date);
-
-// // Convert raisedDate to YYYY-MM-DD
-// const formattedRaisedDate = raisedDate.toISOString().split("T")[0];
-
-// // Get next month of raised date
-// const nextMonth = new Date(
-//   raisedDate.getFullYear(),
-//   raisedDate.getMonth() + 1,
-//   20
-// );
-// const gstDueDate = nextMonth.toISOString().split("T")[0];
-
-//           const expSql = `
-//             INSERT INTO expenses (
-//               regular, type, description, amount, currency, 
-//               raised_date, due_date, paid_date, paid_amount, 
-//               Active, status
-//             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-//           `;
-
-//           const descriptionText = `GST for Invoice ${invoice_number} from ${start_date} to ${end_date}`;
-
-//           db.run(
-//             expSql,
-//             [
-//               "No",
-//               "GST",
-//               descriptionText,
-//               gst_amount,
-//               "INR",
-//               formattedRaisedDate,
-//               gstDueDate,
-//               null,
-//               null,
-//               "Yes",
-//               "Raised"
-//             ],
-//             function (expErr) {
-//               if (expErr) {
-//                 console.error("Expense Insert Error:", expErr);
-//                 return res.status(500).json({ error: expErr.message });
-//               }
-
-//               // FINAL RESPONSE
-//               res.json({
-//                 success: true,
-//                 invoice_id: invoiceId,
-//                 expense_id: this.lastID,
-//                 message: "Invoice and GST expense saved successfully"
-//               });
-//             }
-//           );
-//         }
-//       );
-//     }
-//   );
-// });
-
-// ===============================
-// POST INVOICE + AUTO GST EXPENSE
-// ===============================
-
-
-//17th
 app.post("/invoices", (req, res) => {
   const {
     invoice_number,
@@ -1449,305 +1137,6 @@ app.post("/invoices", (req, res) => {
   );
 });
 
-
-
-
-
-
-// app.post("/invoices", (req, res) => {
-//   const {
-//     invoice_number,
-//     invoice_date,
-//     client_name,
-//     project_id,
-//     start_date,
-//     end_date,
-//     invoice_cycle,
-//     invoice_value,
-//     gst_amount,
-//     due_date,
-//     billable_days,
-//     non_billable_days,
-//     received,
-//     received_date,
-
-//     // ✅ JSON-based milestone fields
-//     milestone_name,
-//     invoice_month,
-//   } = req.body;
-
-//   // -------------------------------------------------
-//   // STEP 0: Basic validation
-//   // -------------------------------------------------
-//   if (!invoice_number || !invoice_date || !client_name || !project_id) {
-//     return res.status(400).json({ error: "Missing required invoice fields" });
-//   }
-
-//   // -------------------------------------------------
-//   // STEP 1: Fetch Client Payment Terms
-//   // -------------------------------------------------
-//   db.get(
-//     "SELECT paymentTerms FROM ClientsTable WHERE clientName = ?",
-//     [client_name],
-//     (err, client) => {
-//       if (err) {
-//         console.error("Client fetch error:", err);
-//         return res.status(500).json({ error: "Error fetching client data" });
-//       }
-
-//       if (!client) {
-//         return res.status(400).json({ error: "Client not found" });
-//       }
-
-//       const paymentTerms = Number(client.paymentTerms) || 0;
-
-//       // -------------------------------------------------
-//       // STEP 2: Auto-calc Due Date
-//       // -------------------------------------------------
-//       let finalDueDate = due_date;
-//       if (!finalDueDate || String(finalDueDate).trim() === "") {
-//         const d = new Date(invoice_date);
-//         d.setDate(d.getDate() + paymentTerms + 2);
-//         finalDueDate = d.toISOString().slice(0, 10);
-//       }
-
-//       // -------------------------------------------------
-//       // STEP 3: Fetch Project (Fixed / Milestones)
-//       // -------------------------------------------------
-//       db.get(
-//         "SELECT isFixed, milestones FROM Projects WHERE projectID = ?",
-//         [project_id],
-//         (err, project) => {
-//           if (err) {
-//             console.error("Project fetch error:", err);
-//             return res.status(500).json({ error: "Error fetching project" });
-//           }
-
-//           if (!project) {
-//             return res.status(400).json({ error: "Project not found" });
-//           }
-
-//           const isFixed = project.isFixed === "Yes";
-
-//           // -------------------------------------------------
-//           // STEP 4: SAFE Milestone JSON Parse
-//           // -------------------------------------------------
-//           let milestones = [];
-//           try {
-//             if (
-//               project.milestones &&
-//               project.milestones !== "NA" &&
-//               project.milestones !== ""
-//             ) {
-//               milestones = JSON.parse(project.milestones);
-//             }
-//           } catch (e) {
-//             console.warn("Invalid milestone JSON, defaulting to []");
-//             milestones = [];
-//           }
-
-//           const cleanMilestoneName =
-//             typeof milestone_name === "string"
-//               ? milestone_name.trim()
-//               : "";
-
-//           const cleanInvoiceMonth =
-//             typeof invoice_month === "string"
-//               ? invoice_month.trim()
-//               : "";
-
-//           // -------------------------------------------------
-//           // STEP 5: Fixed / Time-based Validation
-//           // -------------------------------------------------
-//           if (isFixed) {
-//             if (!cleanMilestoneName) {
-//               return res.status(400).json({
-//                 error: "Milestone is required for fixed project invoice",
-//               });
-//             }
-
-//             const milestone = milestones.find(
-//               (m) => m.name === cleanMilestoneName
-//             );
-
-//             if (!milestone) {
-//               return res.status(400).json({
-//                 error: "Invalid milestone for this project",
-//               });
-//             }
-
-//             if (!cleanInvoiceMonth) {
-//               return res.status(400).json({
-//                 error: "Invoice month is required for milestone billing",
-//               });
-//             }
-//           } else {
-//             if (cleanMilestoneName) {
-//               return res.status(400).json({
-//                 error: "Milestone not allowed for time-based project",
-//               });
-//             }
-//           }
-
-//           // -------------------------------------------------
-//           // STEP 6: Prevent Duplicate Milestone Invoice
-//           // -------------------------------------------------
-//           const proceedInsert = () => insertInvoice();
-
-//           if (isFixed) {
-//             db.get(
-//               `
-//               SELECT id FROM invoices
-//               WHERE project_id = ?
-//                 AND milestone_name = ?
-//                 AND invoice_month = ?
-//               `,
-//               [project_id, cleanMilestoneName, cleanInvoiceMonth],
-//               (err, existing) => {
-//                 if (existing) {
-//                   return res.status(400).json({
-//                     error: "Invoice already raised for this milestone",
-//                   });
-//                 }
-//                 proceedInsert();
-//               }
-//             );
-//           } else {
-//             proceedInsert();
-//           }
-
-//           // =================================================
-//           // STEP 7: Insert Invoice
-//           // =================================================
-//           function insertInvoice() {
-//             const sql = `
-//               INSERT INTO invoices (
-//                 invoice_number,
-//                 invoice_date,
-//                 client_name,
-//                 project_id,
-//                 start_date,
-//                 end_date,
-//                 invoice_cycle,
-//                 invoice_value,
-//                 gst_amount,
-//                 due_date,
-//                 billable_days,
-//                 non_billable_days,
-//                 received,
-//                 received_date,
-//                 milestone_name,
-//                 invoice_month
-//               )
-//               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-//             `;
-
-//             db.run(
-//               sql,
-//               [
-//                 invoice_number,
-//                 invoice_date,
-//                 client_name,
-//                 project_id,
-//                 start_date || null,
-//                 end_date || null,
-//                 invoice_cycle || null,
-//                 invoice_value || 0,
-//                 gst_amount || 0,
-//                 finalDueDate,
-//                 billable_days || 0,
-//                 non_billable_days || 0,
-//                 received || "No",
-//                 received_date || null,
-//                 cleanMilestoneName || null,
-//                 cleanInvoiceMonth || null,
-//               ],
-//               function (err) {
-//                 if (err) {
-//                   console.error("Invoice insert error:", err);
-//                   return res.status(500).json({ error: err.message });
-//                 }
-
-//                 const invoiceId = this.lastID;
-
-//                 // =================================================
-//                 // STEP 8: Insert GST Expense
-//                 // =================================================
-//                 const raisedDate = new Date(invoice_date);
-//                 const raised = raisedDate.toISOString().slice(0, 10);
-
-//                 const nextMonth = new Date(
-//                   raisedDate.getFullYear(),
-//                   raisedDate.getMonth() + 1,
-//                   20
-//                 );
-//                 const gstDueDate = nextMonth.toISOString().slice(0, 10);
-
-//                 const expSql = `
-//                   INSERT INTO expenses (
-//                     regular,
-//                     type,
-//                     description,
-//                     amount,
-//                     currency,
-//                     raised_date,
-//                     due_date,
-//                     paid_date,
-//                     paid_amount,
-//                     Active,
-//                     status
-//                   )
-//                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-//                 `;
-
-//                 const descriptionText = `GST for Invoice ${invoice_number} (${project_id})`;
-
-//                 db.run(
-//                   expSql,
-//                   [
-//                     "No",
-//                     "GST",
-//                     descriptionText,
-//                     gst_amount || 0,
-//                     "INR",
-//                     raised,
-//                     gstDueDate,
-//                     null,
-//                     null,
-//                     "Yes",
-//                     "Raised",
-//                   ],
-//                   function (expErr) {
-//                     if (expErr) {
-//                       console.error("GST insert error:", expErr);
-//                       return res.status(500).json({ error: expErr.message });
-//                     }
-
-//                     // =================================================
-//                     // FINAL RESPONSE
-//                     // =================================================
-//                     res.json({
-//                       success: true,
-//                       invoice_id: invoiceId,
-//                       expense_id: this.lastID,
-//                       message:
-//                         "Invoice and GST expense saved successfully",
-//                     });
-//                   }
-//                 );
-//               }
-//             );
-//           }
-//         }
-//       );
-//     }
-//   );
-// });
-
-
-
-
-
 app.get("/invoices", (req, res) => {
   const query = "SELECT * FROM invoices ORDER BY invoice_date DESC";
 
@@ -1793,25 +1182,6 @@ app.get("/clientsprojects/:clientID", (req, res) => {
     });
   });
 });
-
-
-// // GET Project by ID
-// app.get("/getProject/:id", (req, res) => {
-//   const { id } = req.params;
-//   const sql = "SELECT * FROM Projects WHERE projectID = ?";
-
-//   db.get(sql, [id], (err, row) => {
-//     if (err) {
-//       return res.status(500).json({ error: err.message });
-//     }
-//     if (!row) {
-//       return res.status(404).json({ message: "Project not found" });
-//     }
-//     res.json(row);
-//   });
-// });
-
-// GET Project by ID
 app.get("/getProject/:id", (req, res) => {
   const { id } = req.params;
   const sql = "SELECT * FROM Projects WHERE projectID = ?";
@@ -2000,8 +1370,6 @@ app.get("/getactive-projects", (req, res) => {
     );
   });
 });
-
-
 // Prpoject without INvoice this Month
 app.get("/getprojects-no-invoice-current-month", (req, res) => {
   const sql = `
@@ -2059,25 +1427,35 @@ app.delete("/invoices/:id", (req, res) => {
   });
 });
 
-
-
 // Update Project by ID
 app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
   const { id } = req.params;
   const data = req.body;
   const file = req.file ? req.file.filename : null;
 
-  // ✅ Handle employees JSON array safely
+  // ✅ Parse employees
   let employeesData = [];
   try {
-    employeesData = typeof data.employees === "string"
-      ? JSON.parse(data.employees)
-      : data.employees;
+    employeesData =
+      typeof data.employees === "string"
+        ? JSON.parse(data.employees)
+        : data.employees;
   } catch (err) {
     console.error("Error parsing employees JSON:", err);
   }
 
-  // ✅ Base SQL (purchaseOrder condition handled below)
+  // ✅ Parse milestones
+  let milestonesData = [];
+  try {
+    milestonesData =
+      typeof data.milestones === "string"
+        ? JSON.parse(data.milestones)
+        : data.milestones;
+  } catch (err) {
+    console.error("Error parsing milestones JSON:", err);
+  }
+
+  // ✅ Base SQL
   let sql = `
     UPDATE Projects
     SET 
@@ -2102,15 +1480,18 @@ app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
       poNumber = ?, 
       purchaseOrderValue = ?, 
       active = ?, 
-      invoiceCycle = ?
+      invoiceCycle = ?,
+      isFixed = ?,            -- ✅ NEW
+      startMonth = ?,         -- ✅ NEW
+      milestones = ?          -- ✅ NEW
   `;
 
-  // ✅ Add purchaseOrder if file uploaded
+  // ✅ Add purchaseOrder if uploaded
   if (file) sql += `, purchaseOrder = ?`;
 
   sql += ` WHERE projectID = ?`;
 
-  // ✅ Prepare parameters
+  // ✅ Params (ORDER MUST MATCH SQL)
   const params = [
     data.clientID,
     data.projectName,
@@ -2128,18 +1509,21 @@ app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
     data.gst,
     data.tds,
     data.netPayable,
-    JSON.stringify(employeesData || []), // ✅ Store employees as JSON
+    JSON.stringify(employeesData || []),
     data.hoursOrDays,
     data.poNumber,
     data.purchaseOrderValue,
     data.active,
     data.invoiceCycle,
+    data.isFixed,
+    data.startMonth || null,
+    JSON.stringify(milestonesData || []),
   ];
 
   if (file) params.push(file);
   params.push(id);
 
-  // ✅ Execute update query
+  // ✅ Execute update
   db.run(sql, params, function (err) {
     if (err) {
       console.error("DB Error:", err);
@@ -2149,7 +1533,6 @@ app.put("/update-project/:id", upload.single("purchaseOrder"), (req, res) => {
     res.json({ success: true, changes: this.changes });
   });
 });
-
 
 // Update Client by ID
 app.put("/update-client/:id", (req, res) => {
@@ -2264,9 +1647,6 @@ app.put("/employees/:id", upload.fields([
     res.json({ success: true, changes: this.changes });
   });
 });
-
-
-
 // Delete Employee by ID
 app.delete("/employees/:id", (req, res) => {
   const { id } = req.params;
@@ -3315,367 +2695,6 @@ app.get("/monthlySalary", (req, res) => {
   });
 });
 
-
-// app.get("/getexpenses", (req, res) => {
-//   try {
-//     let { month } = req.query;
-//     if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
-
-//     if (/^\d{4}-\d{2}-\d{2}$/.test(month)) month = month.slice(0, 7);
-//     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Month must be YYYY-MM" });
-
-//     const sql = `
-// WITH params(m) AS (SELECT ? AS m),
-
-// -- Normalize expense start month (exclude Insurance rows)
-// expenses_norm AS (
-//   SELECT 
-//     e.*,
-//     CASE 
-//       WHEN e.regular = 'Yes' THEN substr(e.raised_date,1,7)
-//       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
-//     END AS orig_ym
-//   FROM expenses e
-//   WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')  -- <-- FILTER OUT insurance rows
-// ),
-
-// -- RECURSIVE MONTHS FOR regular = Yes
-// months_gen AS (
-//   -- base row
-//   SELECT 
-//     en.auto_id,
-//     en.regular,
-//     en.type,
-//     en.description,
-//     en.amount,
-//     en.currency,
-//     en.orig_ym AS month_year,
-//     en.orig_ym,
-//     en.raised_date,
-//     en.due_date AS expense_due_date,
-//     en.status AS expense_status,
-//     en.paid_date AS expense_paid_date,
-//     en.paid_amount AS expense_paid_amount
-//   FROM expenses_norm en
-//   WHERE en.regular = 'Yes'
-//     AND en.orig_ym <= (SELECT m FROM params)
-
-//   UNION ALL
-
-//   -- recursive step
-//   SELECT 
-//     mg.auto_id,
-//     mg.regular,
-//     mg.type,
-//     mg.description,
-//     mg.amount,
-//     mg.currency,
-//     CASE
-//       WHEN substr(mg.month_year,6,2) = '12'
-//         THEN printf('%04d-01', CAST(substr(mg.month_year,1,4) AS INTEGER) + 1)
-//       ELSE printf('%04d-%02d',
-//              CAST(substr(mg.month_year,1,4) AS INTEGER),
-//              CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
-//     END AS month_year,
-//     mg.orig_ym,
-//     mg.raised_date,
-//     mg.expense_due_date,
-//     mg.expense_status,
-//     mg.expense_paid_date,
-//     mg.expense_paid_amount
-//   FROM months_gen mg
-//   WHERE mg.month_year < (SELECT m FROM params)
-// ),
-
-// -- NON-RECURSIVE MONTHS FOR regular = No
-// single_months AS (
-//   SELECT 
-//     en.auto_id,
-//     en.regular,
-//     en.type,
-//     en.description,
-//     en.amount,
-//     en.currency,
-//     (SELECT m FROM params) AS month_year,
-//     en.orig_ym,
-//     en.raised_date,
-//     en.due_date AS expense_due_date,
-//     en.status AS expense_status,
-//     en.paid_date AS expense_paid_date,
-//     en.paid_amount AS expense_paid_amount
-//   FROM expenses_norm en
-//   WHERE en.regular <> 'Yes'
-//     AND (
-//          en.orig_ym = (SELECT m FROM params)
-//          OR NOT EXISTS (
-//               SELECT 1 FROM expense_payments ep
-//               WHERE ep.expense_id = en.auto_id
-//                 AND substr(ep.month_year,1,7) = en.orig_ym
-//                 AND ep.status = 'Paid'
-//          )
-//     )
-// ),
-
-// -- MERGE BOTH SOURCES
-// all_months AS (
-//   SELECT * FROM months_gen
-//   UNION ALL
-//   SELECT * FROM single_months
-// )
-
-// -- FINAL OUTPUT WITH PAYMENT JOIN + CARRY FORWARD FILTER
-// SELECT 
-//   am.*,
-//   ep.actual_amount,
-//   COALESCE(ep.paid_amount, am.expense_paid_amount) AS paid_amount,
-//   COALESCE(ep.paid_date, am.expense_paid_date) AS paid_date,
-//   COALESCE(ep.status, am.expense_status) AS payment_status,
-//   ep.due_date AS payment_due_date,
-//   ep.month_year AS payment_month
-// FROM all_months am
-// LEFT JOIN expense_payments ep
-//   ON ep.expense_id = am.auto_id
-//   AND ep.month_year IS NOT NULL
-//   AND substr(ep.month_year,1,7) = am.month_year
-//   LEFT JOIN invoices inv
-//   ON am.type = 'GST'
-//   AND am.description LIKE '%' || inv.invoice_number || '%'
-
-// LEFT JOIN Projects pr
-//   ON inv.project_id = pr.projectID
-
-// LEFT JOIN ClientsTable cl
-//   ON pr.clientID = cl.id
-
-
-// WHERE
-//   am.month_year = (SELECT m FROM params)
-//   OR NOT EXISTS (
-//     SELECT 1 FROM expense_payments ep2
-//     WHERE ep2.expense_id = am.auto_id
-//       AND substr(ep2.month_year,1,7) = am.month_year
-//       AND ep2.status = 'Paid'
-//   )
-
-// ORDER BY am.auto_id DESC, am.month_year DESC;
-// `;
-
-//     db.all(sql, [month], (err, rows) => {
-//       if (err) {
-//         console.error("DB error:", err);
-//         return res.status(500).json({ error: err.message });
-//       }
-
-//       const formatted = rows.map(row => ({
-//         id: `E${row.auto_id}`,
-//         expense_id: row.auto_id,
-//         regular: row.regular,
-//         type: row.type,
-//         description: row.description,
-//         amount: row.amount,
-//         actual_to_pay: row.actual_amount ?? null,
-//         paid_amount: row.paid_amount ?? 0,
-//         raised_date: row.raised_date,
-//         due_date: row.payment_due_date || row.expense_due_date,
-//         paid_date: row.paid_date || null,
-//         paymentstatus: row.payment_status || "Pending",
-//         expensestatus: row.expense_status || "Raised",
-//         month_year: row.month_year
-//       }));
-
-//       res.json(formatted);
-//     });
-//   } catch (ex) {
-//     console.error("Unexpected error:", ex);
-//     res.status(500).json({ error: "Unexpected server error" });
-//   }
-// });
-
-// app.get("/getexpenses", (req, res) => {
-//   try {
-//     let { month } = req.query;
-//     if (!month) return res.status(400).json({ error: "Month is required (YYYY-MM)" });
-
-//     if (/^\d{4}-\d{2}-\d{2}$/.test(month)) month = month.slice(0, 7);
-//     if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: "Month must be YYYY-MM" });
-
-//     const sql = `
-// WITH params(m) AS (SELECT ? AS m),
-
-// expenses_norm AS (
-//   SELECT 
-//     e.*,
-//     CASE 
-//       WHEN e.regular = 'Yes' THEN substr(e.raised_date,1,7)
-//       ELSE COALESCE(NULLIF(substr(e.due_date,1,7), ''), substr(e.raised_date,1,7))
-//     END AS orig_ym
-//   FROM expenses e
-//   WHERE (e.type IS NULL OR e.type NOT LIKE 'Insurance%')
-// ),
-
-// months_gen AS (
-//   SELECT 
-//     en.auto_id,
-//     en.regular,
-//     en.type,
-//     en.description,
-//     en.amount,
-//     en.currency,
-//     en.orig_ym AS month_year,
-//     en.orig_ym,
-//     en.raised_date,
-//     en.due_date AS expense_due_date,
-//     en.status AS expense_status,
-//     en.paid_date AS expense_paid_date,
-//     en.paid_amount AS expense_paid_amount
-//   FROM expenses_norm en
-//   WHERE en.regular = 'Yes'
-//     AND en.orig_ym <= (SELECT m FROM params)
-
-//   UNION ALL
-
-//   SELECT 
-//     mg.auto_id,
-//     mg.regular,
-//     mg.type,
-//     mg.description,
-//     mg.amount,
-//     mg.currency,
-//     CASE
-//       WHEN substr(mg.month_year,6,2) = '12'
-//         THEN printf('%04d-01', CAST(substr(mg.month_year,1,4) AS INTEGER) + 1)
-//       ELSE printf('%04d-%02d',
-//              CAST(substr(mg.month_year,1,4) AS INTEGER),
-//              CAST(substr(mg.month_year,6,2) AS INTEGER) + 1)
-//     END AS month_year,
-//     mg.orig_ym,
-//     mg.raised_date,
-//     mg.expense_due_date,
-//     mg.expense_status,
-//     mg.expense_paid_date,
-//     mg.expense_paid_amount
-//   FROM months_gen mg
-//   WHERE mg.month_year < (SELECT m FROM params)
-// ),
-
-// single_months AS (
-//   SELECT 
-//     en.auto_id,
-//     en.regular,
-//     en.type,
-//     en.description,
-//     en.amount,
-//     en.currency,
-//     (SELECT m FROM params) AS month_year,
-//     en.orig_ym,
-//     en.raised_date,
-//     en.due_date AS expense_due_date,
-//     en.status AS expense_status,
-//     en.paid_date AS expense_paid_date,
-//     en.paid_amount AS expense_paid_amount
-//   FROM expenses_norm en
-//   WHERE en.regular <> 'Yes'
-//     AND (
-//          en.orig_ym = (SELECT m FROM params)
-//          OR NOT EXISTS (
-//               SELECT 1 FROM expense_payments ep
-//               WHERE ep.expense_id = en.auto_id
-//                 AND substr(ep.month_year,1,7) = en.orig_ym
-//                 AND ep.status = 'Paid'
-//          )
-//     )
-// ),
-
-// all_months AS (
-//   SELECT * FROM months_gen
-//   UNION ALL
-//   SELECT * FROM single_months
-// )
-
-// SELECT 
-//   am.*,
-
-//   -- 🔹 GST DATA FROM OTHER TABLES
-//   cl.clientName     AS client_name,
-//   pr.projectName    AS project_name,
-//   inv.invoice_value AS invoice_value,
-
-//   ep.actual_amount,
-//   COALESCE(ep.paid_amount, am.expense_paid_amount) AS paid_amount,
-//   COALESCE(ep.paid_date, am.expense_paid_date) AS paid_date,
-//   COALESCE(ep.status, am.expense_status) AS payment_status,
-//   ep.due_date AS payment_due_date,
-//   ep.month_year AS payment_month
-
-// FROM all_months am
-
-// LEFT JOIN expense_payments ep
-//   ON ep.expense_id = am.auto_id
-//   AND substr(ep.month_year,1,7) = am.month_year
-
-// -- 🔹 JOIN GST → INVOICE → PROJECT → CLIENT
-// LEFT JOIN invoices inv
-//   ON am.type = 'GST'
-// AND am.description LIKE '%' || 
-//     substr(inv.invoice_number, 1, instr(inv.invoice_number, '-') - 1) || '%'
-
-
-// LEFT JOIN Projects pr
-//   ON inv.project_id = pr.projectID
-
-// LEFT JOIN ClientsTable cl
-//   ON pr.clientID = cl.id
-
-// WHERE
-//   am.month_year = (SELECT m FROM params)
-//   OR NOT EXISTS (
-//     SELECT 1 FROM expense_payments ep2
-//     WHERE ep2.expense_id = am.auto_id
-//       AND substr(ep2.month_year,1,7) = am.month_year
-//       AND ep2.status = 'Paid'
-//   )
-
-// ORDER BY am.auto_id DESC, am.month_year DESC;
-// `;
-
-//     db.all(sql, [month], (err, rows) => {
-//       if (err) {
-//         console.error("DB error:", err);
-//         return res.status(500).json({ error: err.message });
-//       }
-
-//       const formatted = rows.map(row => ({
-//         id: `E${row.auto_id}`,
-//         expense_id: row.auto_id,
-//         regular: row.regular,
-//         type: row.type,
-//         description: row.description,
-
-//         // 🔹 GST FIELDS
-//         client_name: row.client_name || null,
-//         project_name: row.project_name || null,
-//         invoice_value: row.invoice_value || null,
-
-//         amount: row.amount,
-//         actual_to_pay: row.actual_amount ?? null,
-//         paid_amount: row.paid_amount ?? 0,
-//         raised_date: row.raised_date,
-//         due_date: row.payment_due_date || row.expense_due_date,
-//         paid_date: row.paid_date || null,
-//         paymentstatus: row.payment_status || "Pending",
-//         expensestatus: row.expense_status || "Raised",
-//         month_year: row.month_year
-//       }));
-
-//       res.json(formatted);
-//     });
-//   } catch (ex) {
-//     console.error("Unexpected error:", ex);
-//     res.status(500).json({ error: "Unexpected server error" });
-//   }
-// });
-
-
 app.get("/getexpenses", (req, res) => {
   try {
     let { month } = req.query;
@@ -4196,9 +3215,6 @@ app.get("/accounts", (req, res) => {
     res.json(rows);
   });
 });
-
-
-
 // 🔹 Get Transaction History (Joined)
 app.get("/transactionsOfBankAccounts", (req, res) => {
   const { account_number } = req.query;
@@ -5459,9 +4475,6 @@ app.post("/saveExpensePayment", (req, res) => {
     res.status(500).send("Unexpected server error");
   }
 });
-
-
-
 function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date) {
   // 1️⃣ Get expense type to find employee
   const findExpense = `
