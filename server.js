@@ -30,6 +30,7 @@ const storage = multer.diskStorage({
   }
 });
 const upload = multer({ storage });
+const XLSX = require("xlsx");
 
 
 // SQLite DB
@@ -42,6 +43,15 @@ const db = new sqlite3.Database("./Accounting.db", (err) => {
   db.configure("busyTimeout", 5000);       // wait 5 seconds if busy
 });
 app.locals.db = db;
+// const dbPath = path.join(__dirname, "Accounting.db");
+
+// const db = new sqlite3.Database(dbPath, (err) => {
+//   if (err) return console.error(err.message);
+//   console.log("Connected to SQLite database at:", dbPath);
+
+//   db.run("PRAGMA journal_mode=WAL;");
+//   db.configure("busyTimeout", 5000);
+// });
 
 
 db.run(`
@@ -4488,15 +4498,15 @@ function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date
 
     const type = exp.type;
 
-    // Must be like: Salary - David Santhan (IND343)
+    
     if (!/salary/i.test(type)) {
       return; // not a salary expense
     }
 
     // Extract name and ID
     const namePart = type.replace(/salary\s*-\s*/i, "").trim();
-    const employeeName = namePart.replace(/\([^)]*\)/g, "").trim(); // "David Santhan"
-    const idMatch = type.match(/\(([^)]+)\)/);                      // (IND343)
+    const employeeName = namePart.replace(/\([^)]*\)/g, "").trim(); 
+    const idMatch = type.match(/\(([^)]+)\)/);                      
     const employee_id = idMatch ? idMatch[1] : null;
 
     if (!employee_id) {
@@ -4541,7 +4551,132 @@ function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date
       }
     );
   });
+  
 }
+app.post("/upload-employees-excel", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    // Read Excel file
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    if (!sheetData.length) {
+      return res.status(400).json({ error: "Excel file is empty" });
+    }
+
+    db.serialize(() => {
+      const stmt = db.prepare(`
+        INSERT OR IGNORE INTO employees (
+          employee_id,
+          employee_name,
+          email,
+          phone_number,
+          skills,
+          ctc,
+          salary_paid,
+          billable,
+          consultant_regular,
+          active,
+          project_ending,
+          date_of_joining
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 'No', ?, ?, ?, ?, ?)
+      `);
+
+      sheetData.forEach((row, index) => {
+        if (!row.employee_id || !row.employee_name || !row.email) {
+          console.warn(`⚠️ Skipping row ${index + 1} (missing required fields)`);
+          return;
+        }
+
+        stmt.run([
+          row.employee_id,
+          row.employee_name,
+          row.email,
+          row.phone_number || null,
+          row.skills || "",
+          row.ctc || 0,
+          row.billable || "No",
+          row.consultant_regular || "Regular",
+          row.active || "Yes",
+          row.project_ending || "No",
+          row.date_of_joining || new Date().toISOString().slice(0, 10)
+        ]);
+      });
+
+      stmt.finalize(() => {
+        res.json({
+          success: true,
+          message: "Employees uploaded successfully",
+          totalRows: sheetData.length
+        });
+      });
+    });
+
+  } catch (err) {
+    console.error("Excel upload error:", err);
+    res.status(500).json({ error: "Failed to process Excel file" });
+  }
+});
+app.post("/upload-clients-excel", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    const workbook = XLSX.readFile(req.file.path);
+    const sheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+    const stmt = db.prepare(`
+      INSERT INTO ClientsTable (
+        clientName,
+        aboutClient,
+        paymentTerms,
+        location,
+        contactSpoc,
+        contactEmail,
+        contactNumber,
+        gstApplicable,
+        gstNumber,
+        gstPercentage
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    rows.forEach((row) => {
+      // minimal validation
+      if (!row.clientName || !row.contactEmail) return;
+
+      stmt.run([
+        row.clientName,
+        row.aboutClient || "",
+        row.paymentTerms || "",
+        row.location || "",
+        row.contactSpoc || "",
+        row.contactEmail,
+        row.contactNumber || "",
+        row.gstApplicable || "No",
+        row.gstNumber || "",
+        row.gstPercentage || "",
+      ]);
+    });
+
+    stmt.finalize(() => {
+      res.json({
+        success: true,
+        message: "Clients imported successfully",
+      });
+    });
+  } catch (err) {
+    console.error("Excel upload error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
