@@ -550,6 +550,21 @@ app.get("/getprojects", (req, res) => {
     });
   });
 });
+function excelDateToISO(value) {
+  if (!value) return null;
+
+  if (typeof value === "string" && value.includes("-")) {
+    return value;
+  }
+
+  if (typeof value === "number") {
+    const date = new Date((value - 25569) * 86400 * 1000);
+    return date.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
 // POST API (add new employee)
 app.post("/postemployees",
   upload.fields([{ name: "resume" }, { name: "photo" }]),
@@ -581,11 +596,11 @@ app.post("/postemployees",
     email,
     phone_number,
     skills,
-    ctc,                  // ✅ CTC
-    resume,               // ✅ Resume path
-    photo,                // ✅ Photo path
-    "No",                 // ✅ salary_paid default
-    billable,             // ✅ Billable ("Yes" or "No")
+    ctc,                 
+    resume,               
+    photo,               
+    "No",                 
+    billable,             
     consultant_regular,
     active,
     project_ending,
@@ -2480,6 +2495,7 @@ app.put("/monthlySalary/update/:employeeId/:month", (req, res) => {
     }
   });
 });
+
 
 
 
@@ -4553,19 +4569,40 @@ function updateSalaryFromExpense(expense_id, month_year, actual_amount, due_date
   });
   
 }
+// ===============================
+// 📤 UPLOAD EMPLOYEES FROM EXCEL
+// ===============================
 app.post("/upload-employees-excel", upload.single("file"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
   try {
-    // Read Excel file
+    // 📄 Read Excel file
     const workbook = XLSX.readFile(req.file.path);
     const sheetName = workbook.SheetNames[0];
     const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
     if (!sheetData.length) {
       return res.status(400).json({ error: "Excel file is empty" });
+    }
+
+    // 🔁 Excel date → ISO converter
+    function excelDateToISO(value) {
+      if (!value) return null;
+
+      // already a string date
+      if (typeof value === "string" && value.includes("-")) {
+        return value.trim();
+      }
+
+      // Excel serial number
+      if (typeof value === "number") {
+        const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+        return date.toISOString().slice(0, 10);
+      }
+
+      return null;
     }
 
     db.serialize(() => {
@@ -4593,6 +4630,18 @@ app.post("/upload-employees-excel", upload.single("file"), (req, res) => {
           return;
         }
 
+        // ✅ FIX: Convert Excel date properly
+        const dateOfJoining =
+          excelDateToISO(row.date_of_joining) ||
+          new Date().toISOString().slice(0, 10);
+
+        console.log(
+          `📅 Row ${index + 1} DOJ raw=`,
+          row.date_of_joining,
+          "→ stored=",
+          dateOfJoining
+        );
+
         stmt.run([
           row.employee_id,
           row.employee_name,
@@ -4604,7 +4653,7 @@ app.post("/upload-employees-excel", upload.single("file"), (req, res) => {
           row.consultant_regular || "Regular",
           row.active || "Yes",
           row.project_ending || "No",
-          row.date_of_joining || new Date().toISOString().slice(0, 10)
+          dateOfJoining // ✅ FIXED VALUE
         ]);
       });
 
@@ -4616,12 +4665,12 @@ app.post("/upload-employees-excel", upload.single("file"), (req, res) => {
         });
       });
     });
-
   } catch (err) {
-    console.error("Excel upload error:", err);
+    console.error("❌ Excel upload error:", err);
     res.status(500).json({ error: "Failed to process Excel file" });
   }
 });
+
 app.post("/upload-clients-excel", upload.single("file"), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
